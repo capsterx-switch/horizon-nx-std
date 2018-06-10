@@ -26,6 +26,9 @@ cfg_if::cfg_if! {
     if #[cfg(target_os = "vxworks")] {
         mod vxworks;
         pub use self::vxworks::*;
+    } else if #[cfg(target_os = "horizon")] {
+        mod horizon;
+        pub use self::horizon::*;
     } else if #[cfg(unix)] {
         mod unix;
         pub use self::unix::*;
