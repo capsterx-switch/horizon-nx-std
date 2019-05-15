@@ -16,7 +16,7 @@ use ptr;
 use time::Duration;
 
 #[cfg(target_arch = "aarch64")]
-use libnx_rs::{libnx};
+use nx::sys as libnx;
 
 use sys::mutex::{self, Mutex};
 use mem;

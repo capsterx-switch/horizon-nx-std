@@ -128,7 +128,7 @@ mod switch {
     use sys_common::thread::start_thread;
     use time::Duration;
     use cell::UnsafeCell;
-    use libnx_rs::libnx::Thread as SThread;
+    use nx::sys::Thread as SThread;
     use libc;
 
     #[repr(C)]

@@ -15,7 +15,7 @@ pub use self::switch::*;
 mod switch {
     use mem;
     use cell::UnsafeCell;
-    use libnx_rs::libnx;
+    use nx::sys as libnx;
     
     pub struct RWLock {
         inner : UnsafeCell<libnx::RwLock>

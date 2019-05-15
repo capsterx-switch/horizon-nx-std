@@ -100,7 +100,7 @@ mod switch {
     use cell::UnsafeCell;
     use mem;
 
-    use libnx_rs::libnx;
+    use nx::sys as libnx;
 
     pub struct Mutex {
         inner: UnsafeCell<libnx::Mutex>,

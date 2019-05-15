@@ -23,8 +23,6 @@ pub fn hashmap_random_keys() -> (u64, u64) {
 
 #[cfg(all(target_arch = "aarch64", target_os = "horizon"))]
 mod imp {
-    use libnx_rs;
-
     pub fn fill_bytes(v: &mut [u8]) {
         unsafe {
             // Initializing and de-initializing the sslC subsystem every time
@@ -36,7 +34,7 @@ mod imp {
             //
             // Perhaps overriding __appInit() and __appExit() will work,
             // but that's an experiment for another time.
-            libnx_rs::libnx::randomGet(v.as_ptr() as _, v.len());
+            nx::sys::randomGet(v.as_ptr() as _, v.len());
         }
     }
 }
