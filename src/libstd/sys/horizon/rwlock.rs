@@ -26,68 +26,42 @@ mod switch {
 
     impl RWLock {
         pub const fn new() -> RWLock {
-            RWLock {
-                inner : UnsafeCell::new(libnx::RwLock {
-                    b : 0,
-                    r : libnx::RMutex {
-                        lock : 0,
-                        thread_tag : 0,
-                        counter : 0
-                    },
-                    g : libnx::RMutex {
-                        lock : 0,
-                        thread_tag : 0,
-                        counter : 0
-                    },
-                })
-            }
-
+            unimplemented!();
         }
         
         #[inline]
         pub unsafe fn read(&self) {
-            libnx::rwlockReadLock(self.inner.get());
+            unimplemented!();
         }
         
         #[inline]
         pub unsafe fn write(&self) {
-            libnx::rwlockWriteLock(self.inner.get());
+            unimplemented!();
         }
         
         #[inline]
         pub unsafe fn read_unlock(&self) {
-            libnx::rwlockReadUnlock(self.inner.get());
+            unimplemented!();
         }
 
         #[inline]
         pub unsafe fn write_unlock(&self) {
-            libnx::rwlockWriteUnlock(self.inner.get());
+            unimplemented!();
         }
 
         #[inline]
         pub unsafe fn try_read(&self) -> bool {
-            let raw_ptr = &mut *self.inner.get();
-            if !libnx::rmutexTryLock(&mut raw_ptr.r as *mut libnx::RMutex) {
-                return false;
-            }
-
-            raw_ptr.b += 1;
-            if raw_ptr.b == 0 {
-                libnx::rmutexLock(&mut raw_ptr.g as *mut libnx::RMutex);
-            }
-            libnx::rmutexUnlock(&mut raw_ptr.r as *mut libnx::RMutex);
-            true
+            unimplemented!();
         }
         
         #[inline]
         pub unsafe fn try_write(&self) -> bool {
-            let raw_ptr = &mut *self.inner.get();
-            libnx::rmutexTryLock(&mut raw_ptr.g as *mut libnx::RMutex)
+            unimplemented!();
         }
 
         #[inline]
         pub unsafe fn destroy(&self) {
-            //TODO: this
+            unimplemented!();
         }
 
     } 
