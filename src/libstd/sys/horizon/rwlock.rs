@@ -18,7 +18,7 @@ mod switch {
     use nx::sys as libnx;
     
     pub struct RWLock {
-        inner : UnsafeCell<libnx::RwLock>
+        inner : UnsafeCell<()>
     }
     
     unsafe impl Send for RWLock {}
@@ -26,7 +26,7 @@ mod switch {
 
     impl RWLock {
         pub const fn new() -> RWLock {
-            panic!("broken by libnx update");
+            Self { inner: UnsafeCell::new(()), }
         }
         
         #[inline]
