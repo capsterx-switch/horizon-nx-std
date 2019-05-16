@@ -257,6 +257,7 @@
 #![cfg_attr(stage0, feature(const_ip))]
 #![feature(const_raw_ptr_deref)]
 #![feature(const_cstr_unchecked)]
+#![feature(const_panic)]
 #![feature(core_intrinsics)]
 #![feature(dropck_eyepatch)]
 #![feature(duration_constants)]
