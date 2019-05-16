@@ -26,7 +26,7 @@ mod switch {
 
     impl RWLock {
         pub const fn new() -> RWLock {
-            unimplemented!();
+            panic!("broken by libnx update");
         }
         
         #[inline]
