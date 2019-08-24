@@ -339,7 +339,7 @@ impl DirEntry {
               target_os = "solaris",
               target_os = "haiku",
               target_os = "l4re",
-              target_os = "horizon",
+              target_os = "horizon-os",
               target_os = "fuchsia"))]
     pub fn ino(&self) -> u64 {
         self.entry.d_ino as u64
@@ -372,7 +372,7 @@ impl DirEntry {
               target_os = "emscripten",
               target_os = "l4re",
               target_os = "haiku",
-              target_os = "horizon"))]
+              target_os = "horizon-os"))]
     fn name_bytes(&self) -> &[u8] {
         unsafe {
             CStr::from_ptr(self.entry.d_name.as_ptr()).to_bytes()
@@ -745,11 +745,11 @@ fn remove_dir_all_recursive(path: &Path) -> io::Result<()> {
     rmdir(path)
 }
 
-#[cfg(target_os = "horizon")]
+#[cfg(target_os = "horizon-os")]
 pub fn readlink(p: &Path) -> io::Result<PathBuf> {
     Err(Error::new(ErrorKind::NotFound, "Readlink not yet implemented."))
 }
-#[cfg(not(target_os = "horizon"))]
+#[cfg(not(target_os = "horizon-os"))]
 pub fn readlink(p: &Path) -> io::Result<PathBuf> {
     let c_path = cstr(p)?;
     let p = c_path.as_ptr() as *const u8;

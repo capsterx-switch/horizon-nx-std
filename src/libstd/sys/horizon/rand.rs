@@ -21,9 +21,9 @@ pub fn hashmap_random_keys() -> (u64, u64) {
     return v
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "horizon"))]
+#[cfg(all(target_arch = "aarch64", target_os = "horizon-os"))]
 mod imp {
-    use libnx_rs;
+    use nx;
 
     pub fn fill_bytes(v: &mut [u8]) {
         unsafe {
@@ -36,31 +36,7 @@ mod imp {
             //
             // Perhaps overriding __appInit() and __appExit() will work,
             // but that's an experiment for another time.
-            libnx_rs::libnx::randomGet(v.as_ptr() as _, v.len());
-        }
-    }
-}
-
-
-
-#[cfg(all(target_os = "horizon", not(target_arch = "aarch64")))]
-mod imp {
-    use libctru;
-
-    pub fn fill_bytes(v: &mut [u8]) {
-        unsafe {
-            // Initializing and de-initializing the sslC subsystem every time
-            // we initialize a hashmap is pretty dumb, but I can't think of a
-            // better method at the moment.
-            //
-            // lazy_static won't work because
-            // destructors (for closing the subsystem on exit) won't run.
-            //
-            // Perhaps overriding __appInit() and __appExit() will work,
-            // but that's an experiment for another time.
-            libctru::sslcInit(0);
-            libctru::sslcGenerateRandomData(v.as_ptr() as _, v.len() as u32);
-            libctru::sslcExit();
+            nx::sys::randomGet(v.as_ptr() as _, v.len());
         }
     }
 }
@@ -70,7 +46,7 @@ mod imp {
           not(target_os = "openbsd"),
           not(target_os = "freebsd"),
           not(target_os = "fuchsia"),
-          not(target_os = "horizon")
+          not(target_os = "horizon-os")
           ))]
 mod imp {
     use fs::File;

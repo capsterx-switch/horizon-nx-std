@@ -10,15 +10,17 @@
 
 
 #[cfg(target_arch = "aarch64")]
-pub use self::switch::*;
+pub use self::hos::*;
 #[cfg(target_arch = "aarch64")]
-mod switch {
+mod hos {
     use mem;
     use cell::UnsafeCell;
-    use libnx_rs::libnx;
+    use nx::sys;
+
+    // TODO: properly implement this
     
     pub struct RWLock {
-        inner : UnsafeCell<libnx::RwLock>
+        // inner : UnsafeCell<libnx::RwLock>
     }
     
     unsafe impl Send for RWLock {}
@@ -27,45 +29,33 @@ mod switch {
     impl RWLock {
         pub const fn new() -> RWLock {
             RWLock {
-                inner : UnsafeCell::new(libnx::RwLock {
-                    b : 0,
-                    r : libnx::RMutex {
-                        lock : 0,
-                        thread_tag : 0,
-                        counter : 0
-                    },
-                    g : libnx::RMutex {
-                        lock : 0,
-                        thread_tag : 0,
-                        counter : 0
-                    },
-                })
             }
-
         }
         
         #[inline]
         pub unsafe fn read(&self) {
-            libnx::rwlockReadLock(self.inner.get());
+            // libnx::rwlockReadLock(self.inner.get());
         }
         
         #[inline]
         pub unsafe fn write(&self) {
-            libnx::rwlockWriteLock(self.inner.get());
+            // libnx::rwlockWriteLock(self.inner.get());
         }
         
         #[inline]
         pub unsafe fn read_unlock(&self) {
-            libnx::rwlockReadUnlock(self.inner.get());
+            // libnx::rwlockReadUnlock(self.inner.get());
         }
 
         #[inline]
         pub unsafe fn write_unlock(&self) {
-            libnx::rwlockWriteUnlock(self.inner.get());
+            // libnx::rwlockWriteUnlock(self.inner.get());
         }
 
         #[inline]
         pub unsafe fn try_read(&self) -> bool {
+            false
+            /*
             let raw_ptr = &mut *self.inner.get();
             if !libnx::rmutexTryLock(&mut raw_ptr.r as *mut libnx::RMutex) {
                 return false;
@@ -77,141 +67,21 @@ mod switch {
             }
             libnx::rmutexUnlock(&mut raw_ptr.r as *mut libnx::RMutex);
             true
+            */
         }
         
         #[inline]
         pub unsafe fn try_write(&self) -> bool {
+            false
+            /*
             let raw_ptr = &mut *self.inner.get();
             libnx::rmutexTryLock(&mut raw_ptr.g as *mut libnx::RMutex)
+            */
         }
 
         #[inline]
         pub unsafe fn destroy(&self) {
-            //TODO: this
         }
 
     } 
-}
-
-#[cfg(not(target_arch = "aarch64"))]
-pub use self::nds::*;
-#[cfg(not(target_arch = "aarch64"))]
-mod nds {
-    use cell::UnsafeCell;
-    use super::mutex::Mutex;
-    use super::condvar::Condvar;
-
-    // A simple read-preferring RWLock implementation that I found on wikipedia <.<
-    pub struct RWLock {
-        mutex: Mutex,
-        cvar: Condvar,
-        reader_count: UnsafeCell<u32>, 
-        writer_active: UnsafeCell<bool>,
-    }
-
-    unsafe impl Send for RWLock {}
-    unsafe impl Sync for RWLock {}
-
-    impl RWLock {
-        pub const fn new() -> RWLock {
-            RWLock {
-                mutex: Mutex::new(),
-                cvar: Condvar::new(),
-                reader_count: UnsafeCell::new(0),
-                writer_active: UnsafeCell::new(false),
-            }
-        }
-
-        #[inline]
-        pub unsafe fn read(&self) {
-            self.mutex.lock();
-
-            while *self.writer_active.get() {
-                self.cvar.wait(&self.mutex);
-            }
-
-            assert!(*self.reader_count.get() != u32::max_value());
-            *self.reader_count.get() += 1;
-
-            self.mutex.unlock();
-        }
-
-        #[inline]
-        pub unsafe fn try_read(&self) -> bool {
-            if !self.mutex.try_lock() {
-                return false
-            }
-
-            while *self.writer_active.get() {
-                self.cvar.wait(&self.mutex);
-            }
-
-            assert!(*self.reader_count.get() != u32::max_value());
-            *self.reader_count.get() += 1;
-
-            self.mutex.unlock();
-            true
-        }
-
-        #[inline]
-        pub unsafe fn write(&self) {
-            self.mutex.lock();
-
-            while *self.writer_active.get() || *self.reader_count.get() > 0 {
-                self.cvar.wait(&self.mutex);
-            }
-
-            *self.writer_active.get() = true;
-
-            self.mutex.unlock();
-        }
-
-        #[inline]
-        pub unsafe fn try_write(&self) -> bool {
-            if !self.mutex.try_lock() {
-                return false;
-            }
-
-            while *self.writer_active.get() || *self.reader_count.get() > 0 {
-                self.cvar.wait(&self.mutex);
-            }
-
-            *self.writer_active.get() = true;
-
-            self.mutex.unlock();
-            true
-        }
-
-        #[inline]
-        pub unsafe fn read_unlock(&self) {
-            self.mutex.lock();
-
-            *self.reader_count.get() -= 1;
-
-            if *self.reader_count.get() == 0 {
-                self.cvar.notify_one()
-            }
-
-            self.mutex.unlock();
-        }
-
-        #[inline]
-        pub unsafe fn write_unlock(&self) {
-            self.mutex.lock();
-
-            *self.writer_active.get() = false;
-
-            self.cvar.notify_all();
-
-            self.mutex.unlock();
-        }
-
-        #[inline]
-        pub unsafe fn destroy(&self) {
-            self.mutex.destroy();
-            self.cvar.destroy();
-            *self.reader_count.get() = 0;
-            *self.writer_active.get() = false;
-        }
-    }
 }

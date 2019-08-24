@@ -186,27 +186,6 @@ fn default_hook(info: &PanicInfo) {
     let thread = thread_info::current_thread();
     let name = thread.as_ref().and_then(|t| t.name()).unwrap_or("<unnamed>");
 
-    // 3DS-specific code begins here to display panics via the Error applet
-    #[cfg(all(target_os="horizon", not(target_arch="aarch64")))]
-    use libctru::{errorInit, errorText, errorDisp, errorConf, ERROR_TEXT_WORD_WRAP,
-                  CFG_LANGUAGE_EN, consoleDebugInit, debugDevice_SVC};
-
-
-    #[cfg(all(target_os="horizon", not(target_arch="aarch64")))]
-    unsafe {
-        // Prepare error message for display
-        let error_text = format!("thread '{}' panicked at '{}', {}", name, msg, location);
-        let mut error_conf: errorConf = mem::uninitialized();
-        errorInit(&mut error_conf,
-                  ERROR_TEXT_WORD_WRAP,
-                  CFG_LANGUAGE_EN);
-        errorText(&mut error_conf, error_text.as_ptr() as *const ::libc::c_char);
-
-        // Display the error
-        errorDisp(&mut error_conf);
-        consoleDebugInit(debugDevice_SVC);
-    }
-
     let write = |err: &mut dyn (::io::Write)| {
         let _ = writeln!(err, "thread '{}' panicked at '{}', {}",
                          name, msg, location);
