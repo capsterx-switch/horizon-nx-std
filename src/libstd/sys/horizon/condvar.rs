@@ -23,7 +23,7 @@ use mem;
 
 #[cfg(target_arch = "aarch64")]
 pub struct Condvar {
-    lock: UnsafeCell<libnx::CondVar>,
+    lock: UnsafeCell<sys::CondVar>,
 }
 
 unsafe impl Send for Condvar {}
@@ -46,14 +46,14 @@ impl Condvar {
     #[inline]
     pub fn notify_one(&self) {
         unsafe {
-            libnx::svcSignalProcessWideKey(self.lock.get(), 1);
+            sys::svcSignalProcessWideKey(self.lock.get(), 1);
         }
     }
 
     #[inline]
     pub fn notify_all(&self) {
         unsafe {
-            libnx::svcSignalProcessWideKey(self.lock.get(), -1);
+            sys::svcSignalProcessWideKey(self.lock.get(), -1);
         }
     }
 
@@ -66,7 +66,7 @@ impl Condvar {
     pub fn wait_timeout(&self, mutex: &Mutex, dur: Duration) -> bool {
         let dur_millis = (dur.as_secs() * 1000) + (dur.subsec_millis() as u64);
         unsafe {
-            libnx::condvarWaitTimeout(self.lock.get(), mutex::raw(&mutex), dur_millis);
+            sys::condvarWaitTimeout(self.lock.get(), mutex::raw(&mutex), dur_millis);
         }
         true
     }

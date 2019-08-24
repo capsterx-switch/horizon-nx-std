@@ -16,11 +16,11 @@ mod hos {
     use nx::sys;
 
     pub struct Mutex {
-        inner: UnsafeCell<libnx::Mutex>,
+        inner: UnsafeCell<sys::Mutex>,
     }
 
     #[inline]
-    pub unsafe fn raw(m: &Mutex) -> *mut libnx::Mutex {
+    pub unsafe fn raw(m: &Mutex) -> *mut sys::Mutex {
         m.inner.get()
     }
 
@@ -40,17 +40,17 @@ mod hos {
 
         #[inline]
         pub unsafe fn lock(&self) {
-            libnx::mutexLock(self.inner.get());
+            sys::mutexLock(self.inner.get());
         }
 
         #[inline]
         pub unsafe fn unlock(&self) {
-            libnx::mutexUnlock(self.inner.get());
+            sys::mutexUnlock(self.inner.get());
         }
 
         #[inline]
         pub unsafe fn try_lock(&self) -> bool {
-            libnx::mutexTryLock(self.inner.get()) 
+            sys::mutexTryLock(self.inner.get()) 
         }
 
         #[inline]
@@ -58,7 +58,7 @@ mod hos {
         }
     }
 
-    pub struct ReentrantMutex { inner: UnsafeCell<libnx::RMutex> }
+    pub struct ReentrantMutex { inner: UnsafeCell<sys::RMutex> }
 
     unsafe impl Send for ReentrantMutex {}
     unsafe impl Sync for ReentrantMutex {}
@@ -66,7 +66,7 @@ mod hos {
     impl ReentrantMutex {
         pub unsafe fn uninitialized() -> ReentrantMutex {
             ReentrantMutex { 
-                inner: UnsafeCell::new(libnx::RMutex {
+                inner: UnsafeCell::new(sys::RMutex {
                     lock : 0,
                     thread_tag : 0,
                     counter : 0,
@@ -75,7 +75,7 @@ mod hos {
         }
 
         pub unsafe fn init(&mut self) {
-            let mtx = libnx::RMutex {
+            let mtx = sys::RMutex {
                 lock : 0,
                 thread_tag : 0,
                 counter : 0
@@ -84,16 +84,16 @@ mod hos {
         }
 
         pub unsafe fn lock(&self) {
-            libnx::rmutexLock(self.inner.get());
+            sys::rmutexLock(self.inner.get());
         }
 
         #[inline]
         pub unsafe fn try_lock(&self) -> bool {
-            libnx::rmutexTryLock(self.inner.get())
+            sys::rmutexTryLock(self.inner.get())
         }
 
         pub unsafe fn unlock(&self) {
-            libnx::rmutexUnlock(self.inner.get());
+            sys::rmutexUnlock(self.inner.get());
         }
 
         pub unsafe fn destroy(&self) {}

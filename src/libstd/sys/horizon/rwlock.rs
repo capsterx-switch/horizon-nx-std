@@ -20,7 +20,7 @@ mod hos {
     // TODO: properly implement this
     
     pub struct RWLock {
-        // inner : UnsafeCell<libnx::RwLock>
+        // inner : UnsafeCell<sys::RwLock>
     }
     
     unsafe impl Send for RWLock {}
@@ -34,22 +34,22 @@ mod hos {
         
         #[inline]
         pub unsafe fn read(&self) {
-            // libnx::rwlockReadLock(self.inner.get());
+            // sys::rwlockReadLock(self.inner.get());
         }
         
         #[inline]
         pub unsafe fn write(&self) {
-            // libnx::rwlockWriteLock(self.inner.get());
+            // sys::rwlockWriteLock(self.inner.get());
         }
         
         #[inline]
         pub unsafe fn read_unlock(&self) {
-            // libnx::rwlockReadUnlock(self.inner.get());
+            // sys::rwlockReadUnlock(self.inner.get());
         }
 
         #[inline]
         pub unsafe fn write_unlock(&self) {
-            // libnx::rwlockWriteUnlock(self.inner.get());
+            // sys::rwlockWriteUnlock(self.inner.get());
         }
 
         #[inline]
@@ -57,15 +57,15 @@ mod hos {
             false
             /*
             let raw_ptr = &mut *self.inner.get();
-            if !libnx::rmutexTryLock(&mut raw_ptr.r as *mut libnx::RMutex) {
+            if !sys::rmutexTryLock(&mut raw_ptr.r as *mut sys::RMutex) {
                 return false;
             }
 
             raw_ptr.b += 1;
             if raw_ptr.b == 0 {
-                libnx::rmutexLock(&mut raw_ptr.g as *mut libnx::RMutex);
+                sys::rmutexLock(&mut raw_ptr.g as *mut sys::RMutex);
             }
-            libnx::rmutexUnlock(&mut raw_ptr.r as *mut libnx::RMutex);
+            sys::rmutexUnlock(&mut raw_ptr.r as *mut sys::RMutex);
             true
             */
         }
@@ -75,7 +75,7 @@ mod hos {
             false
             /*
             let raw_ptr = &mut *self.inner.get();
-            libnx::rmutexTryLock(&mut raw_ptr.g as *mut libnx::RMutex)
+            sys::rmutexTryLock(&mut raw_ptr.g as *mut sys::RMutex)
             */
         }
 
