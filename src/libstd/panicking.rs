@@ -186,6 +186,21 @@ fn default_hook(info: &PanicInfo) {
     let thread = thread_info::current_thread();
     let name = thread.as_ref().and_then(|t| t.name()).unwrap_or("<unnamed>");
 
+    #[cfg(all(target_os = "horizon-os", target_arch = "aarch64"))]
+    use nx::sys;
+
+    #[cfg(all(target_os = "horizon-os", target_arch = "aarch64"))]
+    unsafe {
+
+        let error_text = format!("thread '{}' panicked at '{}', {}", name, msg, location);
+        let mut error_cfg: sys::ErrorSystemConfig = mem::zeroed();
+        
+        let rc = sys::errorSystemCreate(&mut error_cfg, error_text.as_ptr() as *const u8, ptr::null_mut());
+        if rc == 0 {
+            sys::errorSystemShow(&mut error_cfg);
+        }
+    }
+
     let write = |err: &mut dyn (::io::Write)| {
         let _ = writeln!(err, "thread '{}' panicked at '{}', {}",
                          name, msg, location);
