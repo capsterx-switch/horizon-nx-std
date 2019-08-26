@@ -200,11 +200,7 @@ fn default_hook(info: &PanicInfo) {
         sys::viExit();
         sys::nvExit();
 
-        // Prepare our custom BSOD console
-        let mut bsod_console = sys::consoleGetDefault();
-        (*bsod_console).bg = 4;
-
-        let bsod_c = sys::consoleInit(bsod_console);
+        sys::consoleInit(ptr::null_mut());
 
         println!();
         println!("Rust panic");
