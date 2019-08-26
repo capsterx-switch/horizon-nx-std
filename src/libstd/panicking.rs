@@ -188,6 +188,7 @@ fn default_hook(info: &PanicInfo) {
 
     #[cfg(all(target_os = "horizon-nx", target_arch = "aarch64"))]
     use nx::sys;
+    use nx::hid;
     use process;
 
     #[cfg(all(target_os = "horizon-nx", target_arch = "aarch64"))]
@@ -218,9 +219,9 @@ fn default_hook(info: &PanicInfo) {
         sys::consoleUpdate(ptr::null_mut());
 
         loop {
-            let ipt = nx::hid::input_down(nx::hid::Controller::Handheld);
+            let ipt = hid::input_down(hid::Controller::Handheld);
 
-            if input_any!(ipt, nx::hid::Key::Plus, nx::hid::Key::Minus) {
+            if input_any!(ipt, hid::Key::Plus, hid::Key::Minus) {
                 break;
             }
         }
