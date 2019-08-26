@@ -188,7 +188,6 @@ fn default_hook(info: &PanicInfo) {
 
     #[cfg(all(target_os = "horizon-nx", target_arch = "aarch64"))]
     use nx::sys;
-    use nx::hid;
     use process;
 
     #[cfg(all(target_os = "horizon-nx", target_arch = "aarch64"))]
@@ -206,9 +205,6 @@ fn default_hook(info: &PanicInfo) {
         (*bsod_console).bg = 4;
 
         let bsod_c = sys::consoleInit(bsod_console);
-        if !(*bsod_c).consoleInitialised {
-            process::exit(0);
-        }
 
         println!();
         println!("Rust panic");
@@ -219,12 +215,20 @@ fn default_hook(info: &PanicInfo) {
         sys::consoleUpdate(ptr::null_mut());
 
         loop {
-            let ipt = hid::input_down(hid::Controller::Handheld);
+            sys::hidScanInput();
 
-            if input_any!(ipt, hid::Key::Plus, hid::Key::Minus) {
+            let kdown = sys::hidKeysDown(sys::HidControllerID_CONTROLLER_P1_AUTO);
+
+            if (kdown & (HidControllerKeys_KEY_PLUS as u64)) != 0 {
+                break;
+            }
+
+            if (kdown & (HidControllerKeys_KEY_MINUS as u64)) != 0 {
                 break;
             }
         }
+
+        sys::consoleExit(ptr::null_mut());
 
         process::exit(0);
     }
