@@ -192,8 +192,8 @@ fn default_hook(info: &PanicInfo) {
     #[cfg(all(target_os = "horizon-nx", target_arch = "aarch64"))]
     unsafe {
 
-        // Ensure nv is closed (so that graphics won't be a problem at all)
-        sys::nvInitialize();
+        // Ensure graphic services are closed (so that graphics won't be a problem at all)
+        sys::viExit();
         sys::nvExit();
 
         // Ensure console is closed
@@ -201,19 +201,18 @@ fn default_hook(info: &PanicInfo) {
 
         // Prepare our custom BSOD console
         let mut bsod_console = sys::consoleGetDefault();
-        *bsod_console.bg = 4;
+        (*bsod_console).bg = 4;
 
         let bsod_c = sys::consoleInit(bsod_console);
-        if !*bsod_c.consoleInitialised {
-            process::exit(0);
+        if !(*bsod_c).consoleInitialised {
+            std::process::exit(0);
         }
 
-        let error_text = format!("thread '{}' panicked at '{}', {}", name, msg, location);
 
         println!();
         println!("Rust panic");
         println!();
-        println!(error_text);
+        println!("thread '{}' panicked at '{}', {}", name, msg, location);
 
     }
 
