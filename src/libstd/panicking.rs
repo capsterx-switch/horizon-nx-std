@@ -213,7 +213,19 @@ fn default_hook(info: &PanicInfo) {
         println!("Rust panic");
         println!();
         println!("thread '{}' panicked at '{}', {}", name, msg, location);
+        println!();
+        println!("Press Plus/Minus to exit from the current process.");
+        sys::consoleUpdate(ptr::null_mut());
 
+        loop {
+            let ipt = nx::hid::input_down(nx::hid::Controller::Handheld);
+
+            if input_any!(ipt, nx::hid::Key::Plus, nx::hid::Key::Minus) {
+                break;
+            }
+        }
+
+        process::exit(0);
     }
 
     let write = |err: &mut dyn (::io::Write)| {
