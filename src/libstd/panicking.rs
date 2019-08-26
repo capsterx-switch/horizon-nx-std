@@ -193,12 +193,12 @@ fn default_hook(info: &PanicInfo) {
     #[cfg(all(target_os = "horizon-nx", target_arch = "aarch64"))]
     unsafe {
 
+        // Ensure console is closed
+        sys::consoleExit(ptr::null_mut());
+
         // Ensure graphic services are closed (so that graphics won't be a problem at all)
         sys::viExit();
         sys::nvExit();
-
-        // Ensure console is closed
-        sys::consoleExit(ptr::null_mut());
 
         // Prepare our custom BSOD console
         let mut bsod_console = sys::consoleGetDefault();
@@ -219,11 +219,11 @@ fn default_hook(info: &PanicInfo) {
 
             let kdown = sys::hidKeysDown(sys::HidControllerID_CONTROLLER_P1_AUTO);
 
-            if (kdown & (HidControllerKeys_KEY_PLUS as u64)) != 0 {
+            if (kdown & (sys::HidControllerKeys_KEY_PLUS as u64)) != 0 {
                 break;
             }
 
-            if (kdown & (HidControllerKeys_KEY_MINUS as u64)) != 0 {
+            if (kdown & (sys::HidControllerKeys_KEY_MINUS as u64)) != 0 {
                 break;
             }
         }
