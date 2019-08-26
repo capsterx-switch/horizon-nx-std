@@ -188,6 +188,7 @@ fn default_hook(info: &PanicInfo) {
 
     #[cfg(all(target_os = "horizon-nx", target_arch = "aarch64"))]
     use nx::sys;
+    use process;
 
     #[cfg(all(target_os = "horizon-nx", target_arch = "aarch64"))]
     unsafe {
@@ -205,9 +206,8 @@ fn default_hook(info: &PanicInfo) {
 
         let bsod_c = sys::consoleInit(bsod_console);
         if !(*bsod_c).consoleInitialised {
-            std::process::exit(0);
+            process::exit(0);
         }
-
 
         println!();
         println!("Rust panic");
