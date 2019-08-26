@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[cfg(target_os = "horizon-os")]
+#[cfg(target_os = "horizon-nx")]
 pub mod os {
     pub const FAMILY: &'static str = "nintendo";
     pub const OS: &'static str = "horizon";

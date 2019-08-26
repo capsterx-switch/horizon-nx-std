@@ -86,7 +86,7 @@ impl FileDesc {
             }
         }
 
-        #[cfg(not(any(target_os = "android", target_os = "emscripten", target_os = "horizon-os")))]
+        #[cfg(not(any(target_os = "android", target_os = "emscripten", target_os = "horizon-nx")))]
         unsafe fn cvt_pread64(fd: c_int, buf: *mut c_void, count: usize, offset: i64)
             -> io::Result<isize>
         {
@@ -97,7 +97,7 @@ impl FileDesc {
             cvt(pread64(fd, buf, count, offset))
         }
 
-        #[cfg(target_os = "horizon-os")]
+        #[cfg(target_os = "horizon-nx")]
         unsafe fn cvt_pread64(_fd: c_int, _buf: *mut c_void, _count: usize, _offset: i64)
             ->  io::Result<isize> 
         {
@@ -142,7 +142,7 @@ impl FileDesc {
             }
         }
 
-        #[cfg(not(any(target_os = "android", target_os = "emscripten", target_os = "horizon-os")))]
+        #[cfg(not(any(target_os = "android", target_os = "emscripten", target_os = "horizon-nx")))]
         unsafe fn cvt_pwrite64(fd: c_int, buf: *const c_void, count: usize, offset: i64)
             -> io::Result<isize>
         {
@@ -153,7 +153,7 @@ impl FileDesc {
             cvt(pwrite64(fd, buf, count, offset))
         }
 
-        #[cfg(target_os = "horizon-os")]
+        #[cfg(target_os = "horizon-nx")]
         unsafe fn cvt_pwrite64(_fd: c_int, _buf: *const c_void, _count: usize, _offset: i64)
             -> io::Result<isize>
         {
@@ -171,7 +171,7 @@ impl FileDesc {
     }
 
     // We don't have fork/exec on the 3DS, so this shouldn't need to do anything
-    #[cfg(target_os = "horizon-os")]
+    #[cfg(target_os = "horizon-nx")]
     pub fn set_cloexec(&self) -> io::Result<()> {
         Ok(())
     }

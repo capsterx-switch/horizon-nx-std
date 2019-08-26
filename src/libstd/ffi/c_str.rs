@@ -395,7 +395,7 @@ impl CString {
     ///     let c_string = CString::from_raw(raw);
     /// }
     /// ```
-    #[cfg(not(target_os = "horizon-os"))] 
+    #[cfg(not(target_os = "horizon-nx"))] 
     #[stable(feature = "cstr_memory", since = "1.4.0")]
     pub unsafe fn from_raw(ptr: *mut c_char) -> CString {
         let len = sys::strlen(ptr) + 1; // Including the NUL byte
@@ -444,7 +444,7 @@ impl CString {
     ///     let c_string = CString::from_raw(raw);
     /// }
     /// ```
-    #[cfg(target_os = "horizon-os")] 
+    #[cfg(target_os = "horizon-nx")] 
     #[stable(feature = "cstr_memory", since = "1.4.0")]
     pub unsafe fn from_raw(ptr: *mut c_char) -> CString {
         let len = sys::strlen(ptr as *const u8) + 1; // Including the NUL byte

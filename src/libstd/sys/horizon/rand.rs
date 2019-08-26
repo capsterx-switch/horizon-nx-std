@@ -21,7 +21,7 @@ pub fn hashmap_random_keys() -> (u64, u64) {
     return v
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "horizon-os"))]
+#[cfg(all(target_arch = "aarch64", target_os = "horizon-nx"))]
 mod imp {
     use nx;
 
@@ -46,7 +46,7 @@ mod imp {
           not(target_os = "openbsd"),
           not(target_os = "freebsd"),
           not(target_os = "fuchsia"),
-          not(target_os = "horizon-os")
+          not(target_os = "horizon-nx")
           ))]
 mod imp {
     use fs::File;

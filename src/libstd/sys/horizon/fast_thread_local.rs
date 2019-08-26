@@ -43,7 +43,7 @@ pub unsafe fn register_dtor(t: *mut u8, dtor: unsafe extern fn(*mut u8)) {
     register_dtor_fallback(t, dtor);
 }
 
-#[cfg(all(target_os = "horizon-os", target_arch="aarch64"))]
+#[cfg(all(target_os = "horizon-nx", target_arch="aarch64"))]
 pub unsafe fn register_dtor(t: *mut u8, dtor: unsafe extern fn(*mut u8)) {
     use sys_common::thread_local::register_dtor_fallback;
     register_dtor_fallback(t, dtor);

@@ -353,7 +353,7 @@ extern crate alloc_system;
 extern crate libc;
 extern crate rustc_demangle;
 
-#[cfg(all(target_os = "horizon-os", target_arch = "aarch64"))]
+#[cfg(all(target_os = "horizon-nx", target_arch = "aarch64"))]
 extern crate nx;
 
 // We always need an unwinder currently for backtraces
@@ -530,7 +530,7 @@ pub mod rt;
 #[path = "../stdsimd/stdsimd/mod.rs"]
 #[allow(missing_debug_implementations, missing_docs, dead_code)]
 #[unstable(feature = "stdsimd", issue = "48556")]
-#[cfg(not(target_os = "horizon-os"))] //TODO: not need to disable stdsimd for horizon
+#[cfg(not(target_os = "horizon-nx"))] //TODO: not need to disable stdsimd for horizon
 #[cfg(not(test))]
 mod stdsimd;
 
@@ -541,7 +541,7 @@ mod coresimd {
 }
 
 #[stable(feature = "simd_arch", since = "1.27.0")]
-#[cfg(not(target_os = "horizon-os"))] //TODO: not need to disable stdsimd for horizon
+#[cfg(not(target_os = "horizon-nx"))] //TODO: not need to disable stdsimd for horizon
 #[cfg(not(test))]
 pub use stdsimd::arch;
 

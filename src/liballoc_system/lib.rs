@@ -98,7 +98,7 @@ unsafe impl Alloc for System {
     }
 }
 
-#[cfg(any(windows, unix, target_os = "cloudabi", target_os = "redox", target_os = "horizon-os"))]
+#[cfg(any(windows, unix, target_os = "cloudabi", target_os = "redox", target_os = "horizon-nx"))]
 mod realloc_fallback {
     use core::alloc::{GlobalAlloc, Layout};
     use core::cmp;
@@ -121,7 +121,7 @@ mod realloc_fallback {
     }
 }
 
-#[cfg(any(unix, target_os = "cloudabi", target_os = "redox", target_os = "horizon-os"))]
+#[cfg(any(unix, target_os = "cloudabi", target_os = "redox", target_os = "horizon-nx"))]
 mod platform {
     extern crate libc;
 
@@ -178,7 +178,7 @@ mod platform {
 
     #[cfg(any(target_os = "android",
               target_os = "hermit",
-              target_os = "horizon-os",
+              target_os = "horizon-nx",
               target_os = "redox",
               target_os = "solaris"))]
     #[inline]
@@ -205,7 +205,7 @@ mod platform {
 
     #[cfg(not(any(target_os = "android",
                   target_os = "hermit",
-                  target_os = "horizon-os",
+                  target_os = "horizon-nx",
                   target_os = "redox",
                   target_os = "solaris")))]
     #[inline]

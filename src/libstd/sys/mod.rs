@@ -23,7 +23,7 @@
 #![allow(missing_debug_implementations)]
 
 cfg_if! {
-    if #[cfg(target_os = "horizon-os")] {
+    if #[cfg(target_os = "horizon-nx")] {
         mod horizon;
         pub use self::horizon::*;
     } else if #[cfg(unix)] {
