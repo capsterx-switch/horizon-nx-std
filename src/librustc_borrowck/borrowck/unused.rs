@@ -45,7 +45,7 @@ struct UnusedMutCx<'a, 'tcx: 'a> {
 impl<'a, 'tcx> UnusedMutCx<'a, 'tcx> {
     fn check_unused_mut_pat(&self, pats: &[P<hir::Pat>]) {
         let tcx = self.bccx.tcx;
-        let mut mutables: FxHashMap<_, Vec<_>> = Default::default();
+        let mut mutables: FxHashMap<_, Vec<_>> = FxHashMap();
         for p in pats {
             p.each_binding(|_, hir_id, span, ident| {
                 // Skip anything that looks like `_foo`
@@ -76,14 +76,10 @@ impl<'a, 'tcx> UnusedMutCx<'a, 'tcx> {
             }
 
             let (hir_id, span) = ids[0];
-            if span.compiler_desugaring_kind().is_some() {
-                // If the `mut` arises as part of a desugaring, we should ignore it.
-                continue;
-            }
+            let mut_span = tcx.sess.source_map().span_until_non_whitespace(span);
 
             // Ok, every name wasn't used mutably, so issue a warning that this
             // didn't need to be mutable.
-            let mut_span = tcx.sess.source_map().span_until_non_whitespace(span);
             tcx.struct_span_lint_hir(UNUSED_MUT,
                                      hir_id,
                                      span,
@@ -100,7 +96,7 @@ impl<'a, 'tcx> UnusedMutCx<'a, 'tcx> {
 
 impl<'a, 'tcx> Visitor<'tcx> for UnusedMutCx<'a, 'tcx> {
     fn nested_visit_map<'this>(&'this mut self) -> NestedVisitorMap<'this, 'tcx> {
-        NestedVisitorMap::OnlyBodies(&self.bccx.tcx.hir())
+        NestedVisitorMap::OnlyBodies(&self.bccx.tcx.hir)
     }
 
     fn visit_arm(&mut self, arm: &hir::Arm) {
@@ -114,12 +110,12 @@ impl<'a, 'tcx> Visitor<'tcx> for UnusedMutCx<'a, 'tcx> {
 
 impl<'a, 'tcx> Visitor<'tcx> for UsedMutFinder<'a, 'tcx> {
     fn nested_visit_map<'this>(&'this mut self) -> NestedVisitorMap<'this, 'tcx> {
-        NestedVisitorMap::OnlyBodies(&self.bccx.tcx.hir())
+        NestedVisitorMap::OnlyBodies(&self.bccx.tcx.hir)
     }
 
     fn visit_nested_body(&mut self, id: hir::BodyId) {
-        let def_id = self.bccx.tcx.hir().body_owner_def_id(id);
+        let def_id = self.bccx.tcx.hir.body_owner_def_id(id);
         self.set.extend(self.bccx.tcx.borrowck(def_id).used_mut_nodes.iter().cloned());
-        self.visit_body(self.bccx.tcx.hir().body(id));
+        self.visit_body(self.bccx.tcx.hir.body(id));
     }
 }

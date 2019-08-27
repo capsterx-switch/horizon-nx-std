@@ -23,6 +23,7 @@ use dot;
 use rustc::cfg::CFGIndex;
 use dataflow::{DataFlowOperator, DataFlowContext, EntryOrExit};
 use std::rc::Rc;
+use dot::IntoCow;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Variant {
@@ -138,8 +139,8 @@ impl<'a, 'tcx> dot::Labeller<'a> for DataflowLabeller<'a, 'tcx> {
         let suffix = self.dataflow_for(EntryOrExit::Exit, n);
         let inner_label = self.inner.node_label(n);
         inner_label
-            .prefix_line(dot::LabelText::LabelStr(prefix.into()))
-            .suffix_line(dot::LabelText::LabelStr(suffix.into()))
+            .prefix_line(dot::LabelText::LabelStr(prefix.into_cow()))
+            .suffix_line(dot::LabelText::LabelStr(suffix.into_cow()))
     }
     fn edge_label(&'a self, e: &Edge<'a>) -> dot::LabelText<'a> { self.inner.edge_label(e) }
 }

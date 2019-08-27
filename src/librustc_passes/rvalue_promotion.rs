@@ -27,6 +27,7 @@
 use rustc::ty::cast::CastKind;
 use rustc::hir::def::{Def, CtorKind};
 use rustc::hir::def_id::DefId;
+use rustc::hir::map::blocks::FnLikeNode;
 use rustc::middle::expr_use_visitor as euv;
 use rustc::middle::mem_categorization as mc;
 use rustc::middle::mem_categorization::Categorization;
@@ -37,6 +38,7 @@ use rustc::util::nodemap::{ItemLocalSet, NodeSet};
 use rustc::hir;
 use rustc_data_structures::sync::Lrc;
 use syntax::ast;
+use syntax::attr;
 use syntax_pos::{Span, DUMMY_SP};
 use self::Promotability::*;
 use std::ops::{BitAnd, BitAndAssign, BitOr};
@@ -50,8 +52,8 @@ pub fn provide(providers: &mut Providers) {
 }
 
 pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
-    for &body_id in &tcx.hir().krate().body_ids {
-        let def_id = tcx.hir().body_owner_def_id(body_id);
+    for &body_id in &tcx.hir.krate().body_ids {
+        let def_id = tcx.hir.body_owner_def_id(body_id);
         tcx.const_is_rvalue_promotable_to_static(def_id);
     }
     tcx.sess.abort_if_errors();
@@ -63,10 +65,10 @@ fn const_is_rvalue_promotable_to_static<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 {
     assert!(def_id.is_local());
 
-    let node_id = tcx.hir().as_local_node_id(def_id)
+    let node_id = tcx.hir.as_local_node_id(def_id)
         .expect("rvalue_promotable_map invoked with non-local def-id");
-    let body_id = tcx.hir().body_owned_by(node_id);
-    let body_hir_id = tcx.hir().node_to_hir_id(body_id.node_id);
+    let body_id = tcx.hir.body_owned_by(node_id);
+    let body_hir_id = tcx.hir.node_to_hir_id(body_id.node_id);
     tcx.rvalue_promotable_map(def_id).contains(&body_hir_id.local_id)
 }
 
@@ -84,16 +86,16 @@ fn rvalue_promotable_map<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         tables: &ty::TypeckTables::empty(None),
         in_fn: false,
         in_static: false,
-        mut_rvalue_borrows: Default::default(),
+        mut_rvalue_borrows: NodeSet(),
         param_env: ty::ParamEnv::empty(),
         identity_substs: Substs::empty(),
-        result: ItemLocalSet::default(),
+        result: ItemLocalSet(),
     };
 
     // `def_id` should be a `Body` owner
-    let node_id = tcx.hir().as_local_node_id(def_id)
+    let node_id = tcx.hir.as_local_node_id(def_id)
         .expect("rvalue_promotable_map invoked with non-local def-id");
-    let body_id = tcx.hir().body_owned_by(node_id);
+    let body_id = tcx.hir.body_owned_by(node_id);
     let _ = visitor.check_nested_body(body_id);
 
     Lrc::new(visitor.result)
@@ -158,21 +160,47 @@ impl<'a, 'gcx> CheckCrateVisitor<'a, 'gcx> {
         }
     }
 
-    fn handle_const_fn_call(
-        &mut self,
-        def_id: DefId,
-    ) -> Promotability {
-        if self.tcx.is_promotable_const_fn(def_id) {
-            Promotable
-        } else {
-            NotPromotable
+    fn handle_const_fn_call(&mut self, def_id: DefId,
+                            ret_ty: Ty<'gcx>, span: Span) -> Promotability {
+        if self.type_promotability(ret_ty) == NotPromotable {
+            return NotPromotable;
         }
+
+        let node_check = if let Some(fn_id) = self.tcx.hir.as_local_node_id(def_id) {
+            FnLikeNode::from_node(self.tcx.hir.get(fn_id)).map_or(false, |fn_like| {
+                fn_like.constness() == hir::Constness::Const
+            })
+        } else {
+            self.tcx.is_const_fn(def_id)
+        };
+
+        if !node_check {
+            return NotPromotable
+        }
+
+        if let Some(&attr::Stability {
+            const_stability: Some(ref feature_name),
+            .. }) = self.tcx.lookup_stability(def_id) {
+            let stable_check =
+                // feature-gate is enabled,
+                self.tcx.features()
+                    .declared_lib_features
+                    .iter()
+                    .any(|&(ref sym, _)| sym == feature_name) ||
+
+                    // this comes from a macro that has #[allow_internal_unstable]
+                    span.allows_unstable();
+            if !stable_check {
+                return NotPromotable
+            }
+        };
+        Promotable
     }
 
     /// While the `ExprUseVisitor` walks, we will identify which
     /// expressions are borrowed, and insert their ids into this
     /// table. Actually, we insert the "borrow-id", which is normally
-    /// the id of the expression being borrowed: but in the case of
+    /// the id of the expession being borrowed: but in the case of
     /// `ref mut` borrows, the `id` of the pattern is
     /// inserted. Therefore later we remove that entry from the table
     /// and transfer it over to the value being matched. This will
@@ -189,8 +217,8 @@ impl<'a, 'gcx> CheckCrateVisitor<'a, 'gcx> {
 
 impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
     fn check_nested_body(&mut self, body_id: hir::BodyId) -> Promotability {
-        let item_id = self.tcx.hir().body_owner(body_id);
-        let item_def_id = self.tcx.hir().local_def_id(item_id);
+        let item_id = self.tcx.hir.body_owner(body_id);
+        let item_def_id = self.tcx.hir.local_def_id(item_id);
 
         let outer_in_fn = self.in_fn;
         let outer_tables = self.tables;
@@ -200,7 +228,7 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
         self.in_fn = false;
         self.in_static = false;
 
-        match self.tcx.hir().body_owner_kind(item_id) {
+        match self.tcx.hir.body_owner_kind(item_id) {
             hir::BodyOwnerKind::Fn => self.in_fn = true,
             hir::BodyOwnerKind::Static(_) => self.in_static = true,
             _ => {}
@@ -211,7 +239,7 @@ impl<'a, 'tcx> CheckCrateVisitor<'a, 'tcx> {
         self.param_env = self.tcx.param_env(item_def_id);
         self.identity_substs = Substs::identity_for_item(self.tcx, item_def_id);
 
-        let body = self.tcx.hir().body(body_id);
+        let body = self.tcx.hir.body(body_id);
 
         let tcx = self.tcx;
         let param_env = self.param_env;
@@ -320,7 +348,7 @@ fn check_expr_kind<'a, 'tcx>(
                 return NotPromotable;
             }
             match v.tables.node_id_to_type(lhs.hir_id).sty {
-                ty::RawPtr(_) | ty::FnPtr(..) => {
+                ty::RawPtr(_) => {
                     assert!(op.node == hir::BinOpKind::Eq || op.node == hir::BinOpKind::Ne ||
                             op.node == hir::BinOpKind::Le || op.node == hir::BinOpKind::Lt ||
                             op.node == hir::BinOpKind::Ge || op.node == hir::BinOpKind::Gt);
@@ -383,7 +411,7 @@ fn check_expr_kind<'a, 'tcx>(
                         NotPromotable
                     };
                     // Just in case the type is more specific than the definition,
-                    // e.g., impl associated const with type parameters, check it.
+                    // e.g. impl associated const with type parameters, check it.
                     // Also, trait associated consts are relaxed by this.
                     promotable | v.type_promotability(node_ty)
                 }
@@ -415,10 +443,14 @@ fn check_expr_kind<'a, 'tcx>(
                 Def::StructCtor(_, CtorKind::Fn) |
                 Def::VariantCtor(_, CtorKind::Fn) |
                 Def::SelfCtor(..) => Promotable,
-                Def::Fn(did) => v.handle_const_fn_call(did),
+                Def::Fn(did) => {
+                    v.handle_const_fn_call(did, node_ty, e.span)
+                }
                 Def::Method(did) => {
                     match v.tcx.associated_item(did).container {
-                        ty::ImplContainer(_) => v.handle_const_fn_call(did),
+                        ty::ImplContainer(_) => {
+                            v.handle_const_fn_call(did, node_ty, e.span)
+                        }
                         ty::TraitContainer(_) => NotPromotable,
                     }
                 }
@@ -434,13 +466,16 @@ fn check_expr_kind<'a, 'tcx>(
             if let Some(def) = v.tables.type_dependent_defs().get(e.hir_id) {
                 let def_id = def.def_id();
                 match v.tcx.associated_item(def_id).container {
-                    ty::ImplContainer(_) => method_call_result & v.handle_const_fn_call(def_id),
-                    ty::TraitContainer(_) => NotPromotable,
-                }
+                    ty::ImplContainer(_) => {
+                        method_call_result = method_call_result
+                            & v.handle_const_fn_call(def_id, node_ty, e.span);
+                    }
+                    ty::TraitContainer(_) => return NotPromotable,
+                };
             } else {
                 v.tcx.sess.delay_span_bug(e.span, "no type-dependent def for method call");
-                NotPromotable
             }
+            method_call_result
         }
         hir::ExprKind::Struct(ref _qpath, ref hirvec, ref option_expr) => {
             let mut struct_result = Promotable;
@@ -663,7 +698,6 @@ impl<'a, 'gcx, 'tcx> euv::Delegate<'tcx> for CheckCrateVisitor<'a, 'gcx> {
         let mut cur = cmt;
         loop {
             match cur.cat {
-                Categorization::ThreadLocal(..) |
                 Categorization::Rvalue(..) => {
                     if loan_cause == euv::MatchDiscriminant {
                         // Ignore the dummy immutable borrow created by EUV.

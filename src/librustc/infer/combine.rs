@@ -251,7 +251,6 @@ impl<'infcx, 'gcx, 'tcx> CombineFields<'infcx, 'gcx, 'tcx> {
                   dir: RelationDir)
                   -> RelateResult<'tcx, Generalization<'tcx>>
     {
-        debug!("generalize(ty={:?}, for_vid={:?}, dir={:?}", ty, for_vid, dir);
         // Determine the ambient variance within which `ty` appears.
         // The surrounding equation is:
         //
@@ -274,15 +273,8 @@ impl<'infcx, 'gcx, 'tcx> CombineFields<'infcx, 'gcx, 'tcx> {
             root_ty: ty,
         };
 
-        let ty = match generalize.relate(&ty, &ty) {
-            Ok(ty) => ty,
-            Err(e) => {
-                debug!("generalize: failure {:?}", e);
-                return Err(e);
-            }
-        };
+        let ty = generalize.relate(&ty, &ty)?;
         let needs_wf = generalize.needs_wf;
-        debug!("generalize: success {{ {:?}, {:?} }}", ty, needs_wf);
         Ok(Generalization { ty, needs_wf })
     }
 }
@@ -371,7 +363,7 @@ impl<'cx, 'gcx, 'tcx> TypeRelation<'cx, 'gcx, 'tcx> for Generalizer<'cx, 'gcx, '
         if self.ambient_variance == ty::Variance::Invariant {
             // Avoid fetching the variance if we are in an invariant
             // context; no need, and it can induce dependency cycles
-            // (e.g., #41849).
+            // (e.g. #41849).
             relate::relate_substs(self, None, a_subst, b_subst)
         } else {
             let opt_variances = self.tcx().variances_of(item_def_id);
@@ -466,10 +458,9 @@ impl<'cx, 'gcx, 'tcx> TypeRelation<'cx, 'gcx, 'tcx> for Generalizer<'cx, 'gcx, '
                 return Ok(r);
             }
 
-            // Always make a fresh region variable for placeholder
-            // regions; the higher-ranked decision procedures rely on
-            // this.
-            ty::RePlaceholder(..) => { }
+            // Always make a fresh region variable for skolemized regions;
+            // the higher-ranked decision procedures rely on this.
+            ty::ReSkolemized(..) => { }
 
             // For anything else, we make a region variable, unless we
             // are *equating*, in which case it's just wasteful.
@@ -485,6 +476,7 @@ impl<'cx, 'gcx, 'tcx> TypeRelation<'cx, 'gcx, 'tcx> for Generalizer<'cx, 'gcx, '
                 }
             }
 
+            ty::ReCanonical(..) |
             ty::ReClosureBound(..) => {
                 span_bug!(
                     self.span,

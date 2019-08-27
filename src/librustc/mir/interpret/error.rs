@@ -10,83 +10,47 @@
 
 use std::{fmt, env};
 
-use hir::map::definitions::DefPathData;
 use mir;
-use ty::{self, Ty, layout};
-use ty::layout::{Size, Align, LayoutError};
+use ty::{Ty, layout};
+use ty::layout::{Size, Align};
+use rustc_data_structures::sync::Lrc;
 use rustc_target::spec::abi::Abi;
 
-use super::{RawConst, Pointer, InboundsCheck, ScalarMaybeUndef};
+use super::{
+    Pointer, Lock, AccessKind
+};
 
 use backtrace::Backtrace;
 
+use ty;
 use ty::query::TyCtxtAt;
 use errors::DiagnosticBuilder;
 
-use syntax_pos::{Pos, Span};
+use syntax_pos::Span;
 use syntax::ast;
 use syntax::symbol::Symbol;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum ErrorHandled {
-    /// Already reported a lint or an error for this evaluation
-    Reported,
-    /// Don't emit an error, the evaluation failed because the MIR was generic
-    /// and the substs didn't fully monomorphize it.
-    TooGeneric,
-}
-
-impl ErrorHandled {
-    pub fn assert_reported(self) {
-        match self {
-            ErrorHandled::Reported => {},
-            ErrorHandled::TooGeneric => bug!("MIR interpretation failed without reporting an error \
-                                              even though it was fully monomorphized"),
-        }
-    }
-}
-
-pub type ConstEvalRawResult<'tcx> = Result<RawConst<'tcx>, ErrorHandled>;
-pub type ConstEvalResult<'tcx> = Result<&'tcx ty::Const<'tcx>, ErrorHandled>;
+pub type ConstEvalResult<'tcx> = Result<&'tcx ty::Const<'tcx>, Lrc<ConstEvalErr<'tcx>>>;
 
 #[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
 pub struct ConstEvalErr<'tcx> {
     pub span: Span,
-    pub error: ::mir::interpret::EvalErrorKind<'tcx, u64>,
-    pub stacktrace: Vec<FrameInfo<'tcx>>,
+    pub error: ::mir::interpret::EvalError<'tcx>,
+    pub stacktrace: Vec<FrameInfo>,
 }
 
 #[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
-pub struct FrameInfo<'tcx> {
-    pub call_site: Span, // this span is in the caller!
-    pub instance: ty::Instance<'tcx>,
+pub struct FrameInfo {
+    pub span: Span,
+    pub location: String,
     pub lint_root: Option<ast::NodeId>,
-}
-
-impl<'tcx> fmt::Display for FrameInfo<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        ty::tls::with(|tcx| {
-            if tcx.def_key(self.instance.def_id()).disambiguated_data.data
-                == DefPathData::ClosureExpr
-            {
-                write!(f, "inside call to closure")?;
-            } else {
-                write!(f, "inside call to `{}`", self.instance)?;
-            }
-            if !self.call_site.is_dummy() {
-                let lo = tcx.sess.source_map().lookup_char_pos_adj(self.call_site.lo());
-                write!(f, " at {}:{}:{}", lo.filename, lo.line, lo.col.to_usize() + 1)?;
-            }
-            Ok(())
-        })
-    }
 }
 
 impl<'a, 'gcx, 'tcx> ConstEvalErr<'tcx> {
     pub fn struct_error(&self,
         tcx: TyCtxtAt<'a, 'gcx, 'tcx>,
         message: &str)
-        -> Result<DiagnosticBuilder<'tcx>, ErrorHandled>
+        -> Option<DiagnosticBuilder<'tcx>>
     {
         self.struct_generic(tcx, message, None)
     }
@@ -94,14 +58,10 @@ impl<'a, 'gcx, 'tcx> ConstEvalErr<'tcx> {
     pub fn report_as_error(&self,
         tcx: TyCtxtAt<'a, 'gcx, 'tcx>,
         message: &str
-    ) -> ErrorHandled {
+    ) {
         let err = self.struct_error(tcx, message);
-        match err {
-            Ok(mut err) => {
-                err.emit();
-                ErrorHandled::Reported
-            },
-            Err(err) => err,
+        if let Some(mut err) = err {
+            err.emit();
         }
     }
 
@@ -109,18 +69,14 @@ impl<'a, 'gcx, 'tcx> ConstEvalErr<'tcx> {
         tcx: TyCtxtAt<'a, 'gcx, 'tcx>,
         message: &str,
         lint_root: ast::NodeId,
-    ) -> ErrorHandled {
+    ) {
         let lint = self.struct_generic(
             tcx,
             message,
             Some(lint_root),
         );
-        match lint {
-            Ok(mut lint) => {
-                lint.emit();
-                ErrorHandled::Reported
-            },
-            Err(err) => err,
+        if let Some(mut lint) = lint {
+            lint.emit();
         }
     }
 
@@ -129,12 +85,15 @@ impl<'a, 'gcx, 'tcx> ConstEvalErr<'tcx> {
         tcx: TyCtxtAt<'a, 'gcx, 'tcx>,
         message: &str,
         lint_root: Option<ast::NodeId>,
-    ) -> Result<DiagnosticBuilder<'tcx>, ErrorHandled> {
-        match self.error {
-            EvalErrorKind::Layout(LayoutError::Unknown(_)) |
-            EvalErrorKind::TooGeneric => return Err(ErrorHandled::TooGeneric),
-            EvalErrorKind::Layout(LayoutError::SizeOverflow(_)) |
-            EvalErrorKind::TypeckError => return Err(ErrorHandled::Reported),
+    ) -> Option<DiagnosticBuilder<'tcx>> {
+        match self.error.kind {
+            ::mir::interpret::EvalErrorKind::TypeckError |
+            ::mir::interpret::EvalErrorKind::TooGeneric |
+            ::mir::interpret::EvalErrorKind::CheckMatchError |
+            ::mir::interpret::EvalErrorKind::Layout(_) => return None,
+            ::mir::interpret::EvalErrorKind::ReferencedConstant(ref inner) => {
+                inner.struct_generic(tcx, "referenced constant has errors", lint_root)?.emit();
+            },
             _ => {},
         }
         trace!("reporting const eval failure at {:?}", self.span);
@@ -155,15 +114,10 @@ impl<'a, 'gcx, 'tcx> ConstEvalErr<'tcx> {
             struct_error(tcx, message)
         };
         err.span_label(self.span, self.error.to_string());
-        // Skip the last, which is just the environment of the constant.  The stacktrace
-        // is sometimes empty because we create "fake" eval contexts in CTFE to do work
-        // on constant values.
-        if self.stacktrace.len() > 0 {
-            for frame_info in &self.stacktrace[..self.stacktrace.len()-1] {
-                err.span_label(frame_info.call_site, frame_info.to_string());
-            }
+        for FrameInfo { span, location, .. } in &self.stacktrace {
+            err.span_label(*span, format!("inside call to `{}`", location));
         }
-        Ok(err)
+        Some(err)
     }
 }
 
@@ -174,81 +128,50 @@ pub fn struct_error<'a, 'gcx, 'tcx>(
     struct_span_err!(tcx.sess, tcx.span, E0080, "{}", msg)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RustcEncodable, RustcDecodable)]
 pub struct EvalError<'tcx> {
     pub kind: EvalErrorKind<'tcx, u64>,
-    pub backtrace: Option<Box<Backtrace>>,
-}
-
-impl<'tcx> EvalError<'tcx> {
-    pub fn print_backtrace(&mut self) {
-        if let Some(ref mut backtrace) = self.backtrace {
-            eprintln!("{}", print_backtrace(&mut *backtrace));
-        }
-    }
-}
-
-fn print_backtrace(backtrace: &mut Backtrace) -> String {
-    use std::fmt::Write;
-
-    backtrace.resolve();
-
-    let mut trace_text = "\n\nAn error occurred in miri:\n".to_string();
-    write!(trace_text, "backtrace frames: {}\n", backtrace.frames().len()).unwrap();
-    'frames: for (i, frame) in backtrace.frames().iter().enumerate() {
-        if frame.symbols().is_empty() {
-            write!(trace_text, "  {}: no symbols\n", i).unwrap();
-        }
-        let mut first = true;
-        for symbol in frame.symbols() {
-            if first {
-                write!(trace_text, "  {}: ", i).unwrap();
-                first = false;
-            } else {
-                let len = i.to_string().len();
-                write!(trace_text, "  {}  ", " ".repeat(len)).unwrap();
-            }
-            if let Some(name) = symbol.name() {
-                write!(trace_text, "{}\n", name).unwrap();
-            } else {
-                write!(trace_text, "<unknown>\n").unwrap();
-            }
-            write!(trace_text, "           at ").unwrap();
-            if let Some(file_path) = symbol.filename() {
-                write!(trace_text, "{}", file_path.display()).unwrap();
-            } else {
-                write!(trace_text, "<unknown_file>").unwrap();
-            }
-            if let Some(line) = symbol.lineno() {
-                write!(trace_text, ":{}\n", line).unwrap();
-            } else {
-                write!(trace_text, "\n").unwrap();
-            }
-        }
-    }
-    trace_text
 }
 
 impl<'tcx> From<EvalErrorKind<'tcx, u64>> for EvalError<'tcx> {
     fn from(kind: EvalErrorKind<'tcx, u64>) -> Self {
-        let backtrace = match env::var("RUST_CTFE_BACKTRACE") {
-            // matching RUST_BACKTRACE, we treat "0" the same as "not present".
-            Ok(ref val) if val != "0" => {
-                let mut backtrace = Backtrace::new_unresolved();
+        match env::var("MIRI_BACKTRACE") {
+            Ok(ref val) if !val.is_empty() => {
+                let backtrace = Backtrace::new();
 
-                if val == "immediate" {
-                    // Print it now
-                    eprintln!("{}", print_backtrace(&mut backtrace));
-                    None
-                } else {
-                    Some(Box::new(backtrace))
+                use std::fmt::Write;
+                let mut trace_text = "\n\nAn error occurred in miri:\n".to_string();
+                write!(trace_text, "backtrace frames: {}\n", backtrace.frames().len()).unwrap();
+                'frames: for (i, frame) in backtrace.frames().iter().enumerate() {
+                    if frame.symbols().is_empty() {
+                        write!(trace_text, "{}: no symbols\n", i).unwrap();
+                    }
+                    for symbol in frame.symbols() {
+                        write!(trace_text, "{}: ", i).unwrap();
+                        if let Some(name) = symbol.name() {
+                            write!(trace_text, "{}\n", name).unwrap();
+                        } else {
+                            write!(trace_text, "<unknown>\n").unwrap();
+                        }
+                        write!(trace_text, "\tat ").unwrap();
+                        if let Some(file_path) = symbol.filename() {
+                            write!(trace_text, "{}", file_path.display()).unwrap();
+                        } else {
+                            write!(trace_text, "<unknown_file>").unwrap();
+                        }
+                        if let Some(line) = symbol.lineno() {
+                            write!(trace_text, ":{}\n", line).unwrap();
+                        } else {
+                            write!(trace_text, "\n").unwrap();
+                        }
+                    }
                 }
+                error!("{}", trace_text);
             },
-            _ => None,
-        };
+            _ => {},
+        }
         EvalError {
             kind,
-            backtrace,
         }
     }
 }
@@ -263,7 +186,6 @@ pub enum EvalErrorKind<'tcx, O> {
 
     FunctionAbiMismatch(Abi, Abi),
     FunctionArgMismatch(Ty<'tcx>, Ty<'tcx>),
-    FunctionRetMismatch(Ty<'tcx>, Ty<'tcx>),
     FunctionArgCountMismatch,
     NoMirFor(String),
     UnterminatedCString(Pointer),
@@ -272,10 +194,10 @@ pub enum EvalErrorKind<'tcx, O> {
     InvalidMemoryAccess,
     InvalidFunctionPointer,
     InvalidBool,
-    InvalidDiscriminant(ScalarMaybeUndef),
+    InvalidDiscriminant(u128),
     PointerOutOfBounds {
         ptr: Pointer,
-        check: InboundsCheck,
+        access: bool,
         allocation_size: Size,
     },
     InvalidNullPointerUsage,
@@ -304,11 +226,33 @@ pub enum EvalErrorKind<'tcx, O> {
         required: Align,
         has: Align,
     },
+    MemoryLockViolation {
+        ptr: Pointer,
+        len: u64,
+        frame: usize,
+        access: AccessKind,
+        lock: Lock,
+    },
+    MemoryAcquireConflict {
+        ptr: Pointer,
+        len: u64,
+        kind: AccessKind,
+        lock: Lock,
+    },
+    InvalidMemoryLockRelease {
+        ptr: Pointer,
+        len: u64,
+        frame: usize,
+        lock: Lock,
+    },
+    DeallocatedLockedMemory {
+        ptr: Pointer,
+        lock: Lock,
+    },
     ValidationFailure(String),
     CalledClosureAsFunction,
     VtableForArgumentlessMethod,
     ModifiedConstantMemory,
-    ModifiedStatic,
     AssumptionNotHeld,
     InlineAsm,
     TypeNotPrimitive(Ty<'tcx>),
@@ -334,9 +278,10 @@ pub enum EvalErrorKind<'tcx, O> {
     TypeckError,
     /// Resolution can fail if we are in a too generic context
     TooGeneric,
+    CheckMatchError,
     /// Cannot compute this constant because it depends on another one
     /// which already produced an error
-    ReferencedConstant,
+    ReferencedConstant(Lrc<ConstEvalErr<'tcx>>),
     GeneratorResumedAfterReturn,
     GeneratorResumedAfterPanic,
     InfiniteLoop,
@@ -349,8 +294,7 @@ impl<'tcx, O> EvalErrorKind<'tcx, O> {
         use self::EvalErrorKind::*;
         match *self {
             MachineError(ref inner) => inner,
-            FunctionAbiMismatch(..) | FunctionArgMismatch(..) | FunctionRetMismatch(..)
-            | FunctionArgCountMismatch =>
+            FunctionAbiMismatch(..) | FunctionArgMismatch(..) | FunctionArgCountMismatch =>
                 "tried to call a function through a function pointer of incompatible type",
             InvalidMemoryAccess =>
                 "tried to access memory through an invalid pointer",
@@ -368,8 +312,16 @@ impl<'tcx, O> EvalErrorKind<'tcx, O> {
                 "pointer offset outside bounds of allocation",
             InvalidNullPointerUsage =>
                 "invalid use of NULL pointer",
+            MemoryLockViolation { .. } =>
+                "memory access conflicts with lock",
+            MemoryAcquireConflict { .. } =>
+                "new memory lock conflicts with existing lock",
             ValidationFailure(..) =>
                 "type validation failed",
+            InvalidMemoryLockRelease { .. } =>
+                "invalid attempt to release write lock",
+            DeallocatedLockedMemory { .. } =>
+                "tried to deallocate memory in conflict with a lock",
             ReadPointerAsBytes =>
                 "a raw memory access tried to access part of a pointer value as raw bytes",
             ReadBytesAsPointer =>
@@ -378,7 +330,7 @@ impl<'tcx, O> EvalErrorKind<'tcx, O> {
                 "tried to read from foreign (extern) static",
             InvalidPointerMath =>
                 "attempted to do invalid arithmetic on pointers that would leak base addresses, \
-                e.g., comparing pointers into different allocations",
+                e.g. comparing pointers into different allocations",
             ReadUndefBytes(_) =>
                 "attempted to read undefined bytes",
             DeadLocal =>
@@ -413,8 +365,6 @@ impl<'tcx, O> EvalErrorKind<'tcx, O> {
                 "tried to call a vtable function without arguments",
             ModifiedConstantMemory =>
                 "tried to modify constant memory",
-            ModifiedStatic =>
-                "tried to modify a static's initial value from another static's initializer",
             AssumptionNotHeld =>
                 "`assume` argument was false",
             InlineAsm =>
@@ -455,7 +405,9 @@ impl<'tcx, O> EvalErrorKind<'tcx, O> {
                 "encountered constants with type errors, stopping evaluation",
             TooGeneric =>
                 "encountered overly generic constant",
-            ReferencedConstant =>
+            CheckMatchError =>
+                "match checking failed",
+            ReferencedConstant(_) =>
                 "referenced constant has errors",
             Overflow(mir::BinOp::Add) => "attempt to add with overflow",
             Overflow(mir::BinOp::Sub) => "attempt to subtract with overflow",
@@ -477,30 +429,36 @@ impl<'tcx, O> EvalErrorKind<'tcx, O> {
 }
 
 impl<'tcx> fmt::Display for EvalError<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.kind)
-    }
-}
-
-impl<'tcx> fmt::Display for EvalErrorKind<'tcx, u64> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.kind)
     }
 }
 
 impl<'tcx, O: fmt::Debug> fmt::Debug for EvalErrorKind<'tcx, O> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::EvalErrorKind::*;
         match *self {
-            PointerOutOfBounds { ptr, check, allocation_size } => {
-                write!(f, "Pointer must be in-bounds{} at offset {}, but is outside bounds of \
-                           allocation {} which has size {}",
-                       match check {
-                           InboundsCheck::Live => " and live",
-                           InboundsCheck::MaybeDead => "",
-                       },
+            PointerOutOfBounds { ptr, access, allocation_size } => {
+                write!(f, "{} at offset {}, outside bounds of allocation {} which has size {}",
+                       if access { "memory access" } else { "pointer computed" },
                        ptr.offset.bytes(), ptr.alloc_id, allocation_size.bytes())
             },
+            MemoryLockViolation { ptr, len, frame, access, ref lock } => {
+                write!(f, "{:?} access by frame {} at {:?}, size {}, is in conflict with lock {:?}",
+                       access, frame, ptr, len, lock)
+            }
+            MemoryAcquireConflict { ptr, len, kind, ref lock } => {
+                write!(f, "new {:?} lock at {:?}, size {}, is in conflict with lock {:?}",
+                       kind, ptr, len, lock)
+            }
+            InvalidMemoryLockRelease { ptr, len, frame, ref lock } => {
+                write!(f, "frame {} tried to release memory write lock at {:?}, size {}, but \
+                       cannot release lock {:?}", frame, ptr, len, lock)
+            }
+            DeallocatedLockedMemory { ptr, ref lock } => {
+                write!(f, "tried to deallocate memory at {:?} in conflict with lock {:?}",
+                       ptr, lock)
+            }
             ValidationFailure(ref err) => {
                 write!(f, "type validation failed: {}", err)
             }
@@ -511,10 +469,6 @@ impl<'tcx, O: fmt::Debug> fmt::Debug for EvalErrorKind<'tcx, O> {
             FunctionArgMismatch(caller_ty, callee_ty) =>
                 write!(f, "tried to call a function with argument of type {:?} \
                            passing data of type {:?}",
-                    callee_ty, caller_ty),
-            FunctionRetMismatch(caller_ty, callee_ty) =>
-                write!(f, "tried to call a function with return type {:?} \
-                           passing return place of type {:?}",
                     callee_ty, caller_ty),
             FunctionArgCountMismatch =>
                 write!(f, "tried to call a function with incorrect number of arguments"),
@@ -530,7 +484,7 @@ impl<'tcx, O: fmt::Debug> fmt::Debug for EvalErrorKind<'tcx, O> {
                 write!(f, "tried to interpret an invalid 32-bit value as a char: {}", c),
             AlignmentCheckFailed { required, has } =>
                write!(f, "tried to access memory with alignment {}, but alignment {} is required",
-                      has.bytes(), required.bytes()),
+                      has.abi(), required.abi()),
             TypeNotPrimitive(ty) =>
                 write!(f, "expected primitive type, got {}", ty),
             Layout(ref err) =>
@@ -540,9 +494,8 @@ impl<'tcx, O: fmt::Debug> fmt::Debug for EvalErrorKind<'tcx, O> {
             MachineError(ref inner) =>
                 write!(f, "{}", inner),
             IncorrectAllocationInformation(size, size2, align, align2) =>
-                write!(f, "incorrect alloc info: expected size {} and align {}, \
-                           got size {} and align {}",
-                    size.bytes(), align.bytes(), size2.bytes(), align2.bytes()),
+                write!(f, "incorrect alloc info: expected size {} and align {}, got size {} and \
+                       align {}", size.bytes(), align.abi(), size2.bytes(), align2.abi()),
             Panic { ref msg, line, col, ref file } =>
                 write!(f, "the evaluated program panicked at '{}', {}:{}:{}", msg, file, line, col),
             InvalidDiscriminant(val) =>

@@ -538,7 +538,7 @@ fn main() {
     let foo = Foo;
     let ref_foo = &&Foo;
 
-    // error, reached the recursion limit while auto-dereferencing `&&Foo`
+    // error, reached the recursion limit while auto-dereferencing &&Foo
     ref_foo.foo();
 }
 ```
@@ -655,7 +655,7 @@ For example, a function like:
 fn f(a: u16, b: &str) {}
 ```
 
-Must always be called with exactly two arguments, e.g., `f(2, "test")`.
+Must always be called with exactly two arguments, e.g. `f(2, "test")`.
 
 Note that Rust does not have a notion of optional function arguments or
 variadic functions (except for its C-FFI).
@@ -1610,7 +1610,7 @@ it has been disabled for now.
 
 E0185: r##"
 An associated function for a trait was defined to be static, but an
-implementation of the trait declared the same function to be a method (i.e., to
+implementation of the trait declared the same function to be a method (i.e. to
 take a `self` parameter).
 
 Here's an example of this error:
@@ -1631,7 +1631,7 @@ impl Foo for Bar {
 "##,
 
 E0186: r##"
-An associated function for a trait was defined to be a method (i.e., to take a
+An associated function for a trait was defined to be a method (i.e. to take a
 `self` parameter), but an implementation of the trait declared the same function
 to be static.
 
@@ -3082,66 +3082,6 @@ impl<T, U> CoerceUnsized<Foo<U>> for Foo<T> where T: CoerceUnsized<U> {}
 Note that in Rust, structs can only contain an unsized type if the field
 containing the unsized type is the last and only unsized type field in the
 struct.
-"##,
-
-E0378: r##"
-The `DispatchFromDyn` trait currently can only be implemented for
-builtin pointer types and structs that are newtype wrappers around them
-— that is, the struct must have only one field (except for`PhantomData`),
-and that field must itself implement `DispatchFromDyn`.
-
-Examples:
-
-```
-#![feature(dispatch_from_dyn, unsize)]
-use std::{
-    marker::Unsize,
-    ops::DispatchFromDyn,
-};
-
-struct Ptr<T: ?Sized>(*const T);
-
-impl<T: ?Sized, U: ?Sized> DispatchFromDyn<Ptr<U>> for Ptr<T>
-where
-    T: Unsize<U>,
-{}
-```
-
-```
-#![feature(dispatch_from_dyn)]
-use std::{
-    ops::DispatchFromDyn,
-    marker::PhantomData,
-};
-
-struct Wrapper<T> {
-    ptr: T,
-    _phantom: PhantomData<()>,
-}
-
-impl<T, U> DispatchFromDyn<Wrapper<U>> for Wrapper<T>
-where
-    T: DispatchFromDyn<U>,
-{}
-```
-
-Example of illegal `DispatchFromDyn` implementation
-(illegal because of extra field)
-
-```compile-fail,E0378
-#![feature(dispatch_from_dyn)]
-use std::ops::DispatchFromDyn;
-
-struct WrapperExtraField<T> {
-    ptr: T,
-    extra_stuff: i32,
-}
-
-impl<T, U> DispatchFromDyn<WrapperExtraField<U>> for WrapperExtraField<T>
-where
-    T: DispatchFromDyn<U>,
-{}
-```
 "##,
 
 E0390: r##"
@@ -4909,5 +4849,4 @@ register_diagnostics! {
     E0641, // cannot cast to/from a pointer with an unknown kind
     E0645, // trait aliases not finished
     E0698, // type inside generator must be known in this context
-    E0719, // duplicate values for associated type binding
 }

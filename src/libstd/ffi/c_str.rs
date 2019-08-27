@@ -1,13 +1,3 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use ascii;
 use borrow::{Cow, Borrow};
 use cmp::Ordering;
@@ -405,9 +395,59 @@ impl CString {
     ///     let c_string = CString::from_raw(raw);
     /// }
     /// ```
+    #[cfg(not(target_os = "horizon-nx"))] 
     #[stable(feature = "cstr_memory", since = "1.4.0")]
     pub unsafe fn from_raw(ptr: *mut c_char) -> CString {
         let len = sys::strlen(ptr) + 1; // Including the NUL byte
+        let slice = slice::from_raw_parts_mut(ptr, len as usize);
+        CString { inner: Box::from_raw(slice as *mut [c_char] as *mut [u8]) }
+    }
+
+
+    /// Retakes ownership of a `CString` that was transferred to C via [`into_raw`].
+    ///
+    /// Additionally, the length of the string will be recalculated from the pointer.
+    ///
+    /// # Safety
+    ///
+    /// This should only ever be called with a pointer that was earlier
+    /// obtained by calling [`into_raw`] on a `CString`. Other usage (e.g. trying to take
+    /// ownership of a string that was allocated by foreign code) is likely to lead
+    /// to undefined behavior or allocator corruption.
+    ///
+    /// > **Note:** If you need to borrow a string that was allocated by
+    /// > foreign code, use [`CStr`]. If you need to take ownership of
+    /// > a string that was allocated by foreign code, you will need to
+    /// > make your own provisions for freeing it appropriately, likely
+    /// > with the foreign code's API to do that.
+    ///
+    /// [`into_raw`]: #method.into_raw
+    /// [`CStr`]: struct.CStr.html
+    ///
+    /// # Examples
+    ///
+    /// Create a `CString`, pass ownership to an `extern` function (via raw pointer), then retake
+    /// ownership with `from_raw`:
+    ///
+    /// ```ignore (extern-declaration)
+    /// use std::ffi::CString;
+    /// use std::os::raw::c_char;
+    ///
+    /// extern {
+    ///     fn some_extern_function(s: *mut c_char);
+    /// }
+    ///
+    /// let c_string = CString::new("Hello!").unwrap();
+    /// let raw = c_string.into_raw();
+    /// unsafe {
+    ///     some_extern_function(raw);
+    ///     let c_string = CString::from_raw(raw);
+    /// }
+    /// ```
+    #[cfg(target_os = "horizon-nx")] 
+    #[stable(feature = "cstr_memory", since = "1.4.0")]
+    pub unsafe fn from_raw(ptr: *mut c_char) -> CString {
+        let len = sys::strlen(ptr as *const u8) + 1; // Including the NUL byte
         let slice = slice::from_raw_parts_mut(ptr, len as usize);
         CString { inner: Box::from_raw(slice as *mut [c_char] as *mut [u8]) }
     }
@@ -1178,7 +1218,7 @@ impl CStr {
     ///
     /// If the contents of the `CStr` are valid UTF-8 data, this
     /// function will return a [`Cow`]`::`[`Borrowed`]`(`[`&str`]`)`
-    /// with the corresponding [`&str`] slice. Otherwise, it will
+    /// with the the corresponding [`&str`] slice. Otherwise, it will
     /// replace any invalid UTF-8 sequences with
     /// [`U+FFFD REPLACEMENT CHARACTER`][U+FFFD] and return a
     /// [`Cow`]`::`[`Owned`]`(`[`String`]`)` with the result.

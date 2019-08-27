@@ -34,7 +34,7 @@ use parse::token::{self, Token};
 use ptr::P;
 use symbol::Symbol;
 use ThinVec;
-use tokenstream::{TokenStream, TokenTree, DelimSpan};
+use tokenstream::{TokenStream, TokenTree, Delimited, DelimSpan};
 use GLOBALS;
 
 use std::iter;
@@ -96,7 +96,7 @@ impl NestedMetaItem {
         self.meta_item().map_or(false, |meta_item| meta_item.check_name(name))
     }
 
-    /// Returns the name of the meta item, e.g., `foo` in `#[foo]`,
+    /// Returns the name of the meta item, e.g. `foo` in `#[foo]`,
     /// `#[foo="bar"]` and `#[foo(bar)]`, if self is a MetaItem
     pub fn name(&self) -> Option<Name> {
         self.meta_item().and_then(|meta_item| Some(meta_item.name()))
@@ -180,7 +180,7 @@ impl Attribute {
     }
 
     /// Returns the **last** segment of the name of this attribute.
-    /// e.g., `foo` for `#[foo]`, `skip` for `#[rustfmt::skip]`.
+    /// E.g. `foo` for `#[foo]`, `skip` for `#[rustfmt::skip]`.
     pub fn name(&self) -> Name {
         name_from_path(&self.path)
     }
@@ -217,15 +217,6 @@ impl Attribute {
 impl MetaItem {
     pub fn name(&self) -> Name {
         name_from_path(&self.ident)
-    }
-
-    // #[attribute(name = "value")]
-    //             ^^^^^^^^^^^^^^
-    pub fn name_value_literal(&self) -> Option<&Lit> {
-        match &self.node {
-            MetaItemKind::NameValue(v) => Some(v),
-            _ => None,
-        }
     }
 
     pub fn value_str(&self) -> Option<Symbol> {
@@ -455,11 +446,6 @@ pub fn find_by_name<'a>(attrs: &'a [Attribute], name: &str) -> Option<&'a Attrib
     attrs.iter().find(|attr| attr.check_name(name))
 }
 
-pub fn filter_by_name<'a>(attrs: &'a [Attribute], name: &'a str)
-    -> impl Iterator<Item = &'a Attribute> {
-    attrs.iter().filter(move |attr| attr.check_name(name))
-}
-
 pub fn first_attr_value_str_by_name(attrs: &[Attribute], name: &str) -> Option<Symbol> {
     attrs.iter()
         .find(|at| at.check_name(name))
@@ -549,11 +535,10 @@ impl MetaItemKind {
                     }
                     tokens.push(item.node.tokens());
                 }
-                TokenTree::Delimited(
-                    DelimSpan::from_single(span),
-                    token::Paren,
-                    TokenStream::concat(tokens).into(),
-                ).into()
+                TokenTree::Delimited(DelimSpan::from_single(span), Delimited {
+                    delim: token::Paren,
+                    tts: TokenStream::concat(tokens).into(),
+                }).into()
             }
         }
     }
@@ -571,9 +556,9 @@ impl MetaItemKind {
                     None
                 };
             }
-            Some(TokenTree::Delimited(_, delim, ref tts)) if delim == token::Paren => {
+            Some(TokenTree::Delimited(_, ref delimited)) if delimited.delim == token::Paren => {
                 tokens.next();
-                tts.stream()
+                delimited.stream()
             }
             _ => return Some(MetaItemKind::Word),
         };
@@ -804,7 +789,7 @@ pub fn inject(mut krate: ast::Crate, parse_sess: &ParseSess, attrs: &[String]) -
     for raw_attr in attrs {
         let mut parser = parse::new_parser_from_source_str(
             parse_sess,
-            FileName::cli_crate_attr_source_code(&raw_attr),
+            FileName::CliCrateAttr,
             raw_attr.clone(),
         );
 

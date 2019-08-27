@@ -185,7 +185,7 @@
 //! [slice]: primitive.slice.html
 //! [`atomic`]: sync/atomic/index.html
 //! [`collections`]: collections/index.html
-//! [`for`]: ../book/ch03-05-control-flow.html#looping-through-a-collection-with-for
+//! [`for`]: ../book/first-edition/loops.html#for
 //! [`format!`]: macro.format.html
 //! [`fs`]: fs/index.html
 //! [`io`]: io/index.html
@@ -200,14 +200,14 @@
 //! [`sync`]: sync/index.html
 //! [`thread`]: thread/index.html
 //! [`use std::env`]: env/index.html
-//! [`use`]: ../book/ch07-02-modules-and-use-to-control-scope-and-privacy.html#the-use-keyword-to-bring-paths-into-a-scope
-//! [crate root]: ../book/ch07-01-packages-and-crates-for-making-libraries-and-executables.html
+//! [`use`]: ../book/first-edition/crates-and-modules.html#importing-modules-with-use
+//! [crate root]: ../book/first-edition/crates-and-modules.html#basic-terminology-crates-and-modules
 //! [crates.io]: https://crates.io
-//! [deref-coercions]: ../book/ch15-02-deref.html#implicit-deref-coercions-with-functions-and-methods
+//! [deref-coercions]: ../book/second-edition/ch15-02-deref.html#implicit-deref-coercions-with-functions-and-methods
 //! [files]: fs/struct.File.html
 //! [multithreading]: thread/index.html
 //! [other]: #what-is-in-the-standard-library-documentation
-//! [primitive types]: ../book/ch03-02-data-types.html
+//! [primitive types]: ../book/first-edition/primitive-types.html
 
 #![stable(feature = "rust1", since = "1.0.0")]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -222,6 +222,7 @@
 #![no_std]
 
 #![deny(missing_docs)]
+#![deny(intra_doc_link_resolution_failure)]
 #![deny(missing_debug_implementations)]
 
 // Tell the compiler to link to either panic_abort or panic_unwind
@@ -235,6 +236,7 @@
 #![cfg_attr(test, feature(test, update_panic_count))]
 #![feature(alloc)]
 #![feature(alloc_error_handler)]
+#![feature(alloc_system)]
 #![feature(allocator_api)]
 #![feature(allocator_internals)]
 #![feature(allow_internal_unsafe)]
@@ -247,16 +249,17 @@
 #![feature(c_variadic)]
 #![feature(cfg_target_has_atomic)]
 #![feature(cfg_target_thread_local)]
-#![feature(cfg_target_vendor)]
+#![cfg_attr(stage0, feature(cfg_target_vendor))]
 #![feature(char_error_internals)]
 #![feature(compiler_builtins_lib)]
-#![feature(const_int_ops)]
-#![feature(const_ip)]
+#![feature(concat_idents)]
+#![cfg_attr(stage0, feature(const_int_ops))]
+#![cfg_attr(stage0, feature(const_ip))]
 #![feature(const_raw_ptr_deref)]
 #![feature(const_cstr_unchecked)]
 #![feature(core_intrinsics)]
 #![feature(dropck_eyepatch)]
-#![feature(duration_as_u128)]
+#![feature(duration_constants)]
 #![feature(exact_size_is_empty)]
 #![feature(external_doc)]
 #![feature(fixed_size_array)]
@@ -271,7 +274,6 @@
 #![feature(libc)]
 #![feature(link_args)]
 #![feature(linkage)]
-#![cfg_attr(not(stage0), feature(min_const_unsafe_fn))]
 #![feature(needs_panic_runtime)]
 #![feature(never_type)]
 #![feature(nll)]
@@ -279,8 +281,6 @@
 #![feature(on_unimplemented)]
 #![feature(optin_builtin_traits)]
 #![feature(panic_internals)]
-#![feature(panic_unwind)]
-#![feature(pin)]
 #![feature(prelude_import)]
 #![feature(ptr_internals)]
 #![feature(raw)]
@@ -296,6 +296,7 @@
 #![feature(staged_api)]
 #![feature(stmt_expr_attributes)]
 #![feature(str_internals)]
+#![feature(renamed_spin_loop)]
 #![feature(rustc_private)]
 #![feature(thread_local)]
 #![feature(toowned_clone_into)]
@@ -311,12 +312,22 @@
 #![feature(doc_keyword)]
 #![feature(panic_info_message)]
 #![feature(non_exhaustive)]
+#![feature(panic_unwind)]
 #![feature(alloc_layout_extra)]
 #![feature(maybe_uninit)]
-#![cfg_attr(target_env = "sgx", feature(global_asm, range_contains, slice_index_methods,
-                                        decl_macro, coerce_unsized))]
 
 #![default_lib_allocator]
+
+// Always use alloc_system during stage0 since we don't know if the alloc_*
+// crate the stage0 compiler will pick by default is enabled (e.g.
+// if the user has disabled jemalloc in `./configure`).
+// `force_alloc_system` is *only* intended as a workaround for local rebuilds
+// with a rustc without jemalloc.
+// FIXME(#44236) shouldn't need MSVC logic
+#[cfg(all(not(target_env = "msvc"),
+          any(all(stage0, not(test)), feature = "force_alloc_system")))]
+#[global_allocator]
+static ALLOC: alloc_system::System = alloc_system::System;
 
 // Explicitly import the prelude. The compiler uses this same unstable attribute
 // to import the prelude implicitly when building crates that depend on std.
@@ -337,14 +348,21 @@ pub use core::{unreachable, unimplemented, write, writeln, try};
 #[allow(unused_imports)] // macros from `alloc` are not used on all platforms
 #[macro_use]
 extern crate alloc as alloc_crate;
+extern crate alloc_system;
 #[doc(masked)]
 extern crate libc;
 extern crate rustc_demangle;
 
+#[cfg(all(target_os = "horizon-nx", target_arch = "aarch64"))]
+extern crate nx_sys as libnx;
+
 // We always need an unwinder currently for backtraces
-#[doc(masked)]
+//#[doc(masked)]
 #[allow(unused_extern_crates)]
 extern crate unwind;
+
+#[cfg(feature = "backtrace")]
+extern crate backtrace_sys;
 
 // During testing, this crate is not actually the "real" std library, but rather
 // it links to the real std library, which was compiled from this same source
@@ -354,7 +372,7 @@ extern crate unwind;
 // testing gives test-std access to real-std lang items and globals. See #2912
 #[cfg(test)] extern crate std as realstd;
 
-#[cfg(target_env = "sgx")]
+#[cfg(all(target_vendor = "fortanix", target_env = "sgx"))]
 #[macro_use]
 #[allow(unused_imports)] // FIXME: without `#[macro_use]`, get error: “cannot
                          // determine resolution for the macro `usercalls_asm`”
@@ -432,7 +450,7 @@ pub use alloc_crate::borrow;
 pub use alloc_crate::fmt;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use alloc_crate::format;
-#[unstable(feature = "pin", issue = "49150")]
+#[stable(feature = "pin", since = "1.33.0")]
 pub use core::pin;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use alloc_crate::slice;
@@ -501,7 +519,7 @@ mod memchr;
 // compiler
 pub mod rt;
 
-// Pull in the `stdsimd` crate directly into libstd. This is the same as
+// Pull in the the `stdsimd` crate directly into libstd. This is the same as
 // libcore's arch/simd modules where the source of truth here is in a different
 // repository, but we pull things in here manually to get it into libstd.
 //
@@ -512,6 +530,7 @@ pub mod rt;
 #[path = "../stdsimd/stdsimd/mod.rs"]
 #[allow(missing_debug_implementations, missing_docs, dead_code)]
 #[unstable(feature = "stdsimd", issue = "48556")]
+#[cfg(not(target_os = "horizon-nx"))] //TODO: not need to disable stdsimd for horizon
 #[cfg(not(test))]
 mod stdsimd;
 
@@ -522,6 +541,7 @@ mod coresimd {
 }
 
 #[stable(feature = "simd_arch", since = "1.27.0")]
+#[cfg(not(target_os = "horizon-nx"))] //TODO: not need to disable stdsimd for horizon
 #[cfg(not(test))]
 pub use stdsimd::arch;
 

@@ -40,7 +40,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             return_ty
         };
 
-        if !lhs_expr.is_place_expr() {
+        if !self.is_place_expr(lhs_expr) {
             struct_span_err!(
                 self.tcx.sess, lhs_expr.span,
                 E0067, "invalid left-hand side expression")
@@ -170,7 +170,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 // Find a suitable supertype of the LHS expression's type, by coercing to
                 // a type variable, to pass as the `Self` to the trait, avoiding invariant
                 // trait matching creating lifetime constraints that are too strict.
-                // e.g., adding `&'a T` and `&'b T`, given `&'x T: Add<&'x T>`, will result
+                // E.g. adding `&'a T` and `&'b T`, given `&'x T: Add<&'x T>`, will result
                 // in `&'a T <: &'x T` and `&'b T <: &'x T`, instead of `'a = 'b = 'x`.
                 let lhs_ty = self.check_expr_with_needs(lhs_expr, Needs::None);
                 let fresh_var = self.next_ty_var(TypeVariableOrigin::MiscVariable(lhs_expr.span));
@@ -186,7 +186,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         };
         let lhs_ty = self.resolve_type_vars_with_obligations(lhs_ty);
 
-        // N.B., as we have not yet type-checked the RHS, we don't have the
+        // NB: As we have not yet type-checked the RHS, we don't have the
         // type at hand. Make a variable to represent it. The whole reason
         // for this indirection is so that, below, we can check the expr
         // using this variable as the expected type, which sometimes lets
@@ -311,14 +311,14 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                 hir::BinOpKind::BitOr  => Some("std::ops::BitOrAssign"),
                                 hir::BinOpKind::Shl    => Some("std::ops::ShlAssign"),
                                 hir::BinOpKind::Shr    => Some("std::ops::ShrAssign"),
-                                _                      => None
+                                _             => None
                             };
                             if let Some(missing_trait) = missing_trait {
                                 if op.node == hir::BinOpKind::Add &&
                                     self.check_str_addition(expr, lhs_expr, rhs_expr, lhs_ty,
                                                             rhs_ty, &mut err, true) {
                                     // This has nothing here because it means we did string
-                                    // concatenation (e.g., "Hello " += "World!"). This means
+                                    // concatenation (e.g. "Hello " += "World!"). This means
                                     // we don't want the note in the else clause to be emitted
                                 } else if let ty::Param(_) = lhs_ty.sty {
                                     // FIXME: point to span of param
@@ -338,15 +338,15 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                         }
                         IsAssign::No => {
                             let mut err = struct_span_err!(self.tcx.sess, expr.span, E0369,
-                                "binary operation `{}` cannot be applied to type `{}`",
-                                op.node.as_str(),
-                                lhs_ty);
+                                            "binary operation `{}` cannot be applied to type `{}`",
+                                            op.node.as_str(),
+                                            lhs_ty);
                             let mut suggested_deref = false;
                             if let Ref(_, mut rty, _) = lhs_ty.sty {
                                 if {
                                     !self.infcx.type_moves_by_default(self.param_env,
-                                                                      rty,
-                                                                      lhs_expr.span) &&
+                                                                        rty,
+                                                                        lhs_expr.span) &&
                                         self.lookup_op_method(rty,
                                                               &[rhs_ty],
                                                               Op::Binary(op, is_assign))
@@ -392,7 +392,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                     self.check_str_addition(expr, lhs_expr, rhs_expr, lhs_ty,
                                                             rhs_ty, &mut err, false) {
                                     // This has nothing here because it means we did string
-                                    // concatenation (e.g., "Hello " + "World!"). This means
+                                    // concatenation (e.g. "Hello " + "World!"). This means
                                     // we don't want the note in the else clause to be emitted
                                 } else if let ty::Param(_) = lhs_ty.sty {
                                     // FIXME: point to span of param
@@ -682,7 +682,7 @@ enum Op {
     Unary(hir::UnOp, Span),
 }
 
-/// Returns true if this is a built-in arithmetic operation (e.g., u32
+/// Returns true if this is a built-in arithmetic operation (e.g. u32
 /// + u32, i16x4 == i16x4) and false if these types would have to be
 /// overloaded to be legal. There are two reasons that we distinguish
 /// builtin operations from overloaded ones (vs trying to drive

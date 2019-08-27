@@ -30,7 +30,7 @@
 //!
 //! For more information about how rustc works, see the [rustc guide].
 //!
-//! [rustc guide]: https://rust-lang.github.io/rustc-guide/
+//! [rustc guide]: https://rust-lang-nursery.github.io/rustc-guide/
 //!
 //! # Note
 //!
@@ -42,13 +42,16 @@
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
+#![cfg_attr(stage0, feature(const_fn))]
+#![cfg_attr(not(stage0), feature(min_const_fn))]
 #![feature(core_intrinsics)]
 #![feature(drain_filter)]
 #![cfg_attr(windows, feature(libc))]
+#![cfg_attr(stage0, feature(macro_vis_matcher))]
 #![feature(never_type)]
 #![feature(exhaustive_patterns)]
 #![feature(extern_types)]
-#![feature(nll)]
+#![cfg_attr(not(stage0), feature(nll))]
 #![feature(non_exhaustive)]
 #![feature(proc_macro_internals)]
 #![feature(quote)]
@@ -56,6 +59,7 @@
 #![feature(refcell_replace_swap)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_attrs)]
+#![cfg_attr(stage0, feature(attr_literals))]
 #![feature(slice_patterns)]
 #![feature(slice_sort_by_cached_key)]
 #![feature(specialization)]
@@ -66,13 +70,13 @@
 #![feature(step_trait)]
 #![feature(integer_atomics)]
 #![feature(test)]
+#![cfg_attr(not(stage0), feature(impl_header_lifetime_elision))]
 #![feature(in_band_lifetimes)]
+#![feature(macro_at_most_once_rep)]
+#![cfg_attr(stage0, feature(crate_in_paths))]
 #![feature(crate_visibility_modifier)]
-#![feature(transpose_result)]
 
 #![recursion_limit="512"]
-
-#![warn(elided_lifetimes_in_paths)]
 
 extern crate arena;
 #[macro_use] extern crate bitflags;
@@ -119,7 +123,7 @@ extern crate test;
 #[macro_use]
 mod macros;
 
-// N.B., this module needs to be declared first so diagnostics are
+// NB: This module needs to be declared first so diagnostics are
 // registered before they are used.
 pub mod diagnostics;
 

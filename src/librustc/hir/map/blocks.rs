@@ -13,7 +13,7 @@
 //! it captures a common set of attributes that all "function-like
 //! things" (represented by `FnLike` instances) share.  For example,
 //! all `FnLike` instances have a type signature (be it explicit or
-//! inferred).  And all `FnLike` instances have a body, i.e., the code
+//! inferred).  And all `FnLike` instances have a body, i.e. the code
 //! that is run when the function-like thing it represents is invoked.
 //!
 //! With the above abstraction in place, one can treat the program
@@ -34,7 +34,7 @@ use syntax_pos::Span;
 /// More specifically, it is one of either:
 ///
 ///   - A function item,
-///   - A closure expr (i.e., an ExprKind::Closure), or
+///   - A closure expr (i.e. an ExprKind::Closure), or
 ///   - The default implementation for a trait method.
 ///
 /// To construct one, use the `Code::from_node` function.
@@ -43,7 +43,7 @@ pub struct FnLikeNode<'a> { node: Node<'a> }
 
 /// MaybeFnLike wraps a method that indicates if an object
 /// corresponds to some FnLikeNode.
-trait MaybeFnLike { fn is_fn_like(&self) -> bool; }
+pub trait MaybeFnLike { fn is_fn_like(&self) -> bool; }
 
 impl MaybeFnLike for ast::Item {
     fn is_fn_like(&self) -> bool {
@@ -143,7 +143,7 @@ impl<'a> ClosureParts<'a> {
 
 impl<'a> FnLikeNode<'a> {
     /// Attempts to construct a FnLikeNode from presumed FnLike node input.
-    pub fn from_node(node: Node<'_>) -> Option<FnLikeNode<'_>> {
+    pub fn from_node(node: Node) -> Option<FnLikeNode> {
         let fn_like = match node {
             map::Node::Item(item) => item.is_fn_like(),
             map::Node::TraitItem(tm) => tm.is_fn_like(),
@@ -173,15 +173,15 @@ impl<'a> FnLikeNode<'a> {
     }
 
     pub fn span(self) -> Span {
-        self.handle(|i: ItemFnParts<'_>| i.span,
+        self.handle(|i: ItemFnParts| i.span,
                     |_, _, _: &'a ast::MethodSig, _, _, span, _| span,
-                    |c: ClosureParts<'_>| c.span)
+                    |c: ClosureParts| c.span)
     }
 
     pub fn id(self) -> NodeId {
-        self.handle(|i: ItemFnParts<'_>| i.id,
+        self.handle(|i: ItemFnParts| i.id,
                     |id, _, _: &'a ast::MethodSig, _, _, _, _| id,
-                    |c: ClosureParts<'_>| c.id)
+                    |c: ClosureParts| c.id)
     }
 
     pub fn constness(self) -> ast::Constness {

@@ -146,7 +146,7 @@ impl FromHex for str {
         }
 
         match modulus {
-            0 => Ok(b),
+            0 => Ok(b.into_iter().collect()),
             _ => Err(InvalidHexLength),
         }
     }

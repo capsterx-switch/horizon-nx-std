@@ -21,6 +21,7 @@ pub fn opts() -> TargetOptions {
     ]);
 
     TargetOptions {
+        exe_allocation_crate: None,
         executables: true,
         has_elf_tls: true,
         linker_is_gnu: true,

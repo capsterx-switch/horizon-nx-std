@@ -100,7 +100,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         let mut labels = vec![(
             span,
             if &name == "_" {
-                "cannot infer type".to_owned()
+                "cannot infer type".to_string()
             } else {
                 format!("cannot infer type for `{}`", name)
             },
@@ -109,13 +109,13 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         let mut local_visitor = FindLocalByTypeVisitor {
             infcx: &self,
             target_ty: &ty,
-            hir_map: &self.tcx.hir(),
+            hir_map: &self.tcx.hir,
             found_local_pattern: None,
             found_arg_pattern: None,
         };
 
         if let Some(body_id) = body_id {
-            let expr = self.tcx.hir().expect_expr(body_id.node_id);
+            let expr = self.tcx.hir.expect_expr(body_id.node_id);
             local_visitor.visit_expr(expr);
         }
 
@@ -138,7 +138,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             // ```
             labels.clear();
             labels.push(
-                (pattern.span, "consider giving this closure parameter a type".to_owned()));
+                (pattern.span, "consider giving this closure parameter a type".to_string()));
         } else if let Some(pattern) = local_visitor.found_local_pattern {
             if let Some(simple_ident) = pattern.simple_ident() {
                 match pattern.span.compiler_desugaring_kind() {
@@ -146,12 +146,12 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                                          format!("consider giving `{}` a type", simple_ident))),
                     Some(CompilerDesugaringKind::ForLoop) => labels.push((
                         pattern.span,
-                        "the element type for this iterator is not specified".to_owned(),
+                        "the element type for this iterator is not specified".to_string(),
                     )),
                     _ => {}
                 }
             } else {
-                labels.push((pattern.span, "consider giving the pattern a type".to_owned()));
+                labels.push((pattern.span, "consider giving the pattern a type".to_string()));
             }
         }
 

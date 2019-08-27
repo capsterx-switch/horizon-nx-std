@@ -38,7 +38,7 @@ pub fn check_legal_trait_for_method_call(tcx: TyCtxt, span: Span, trait_id: DefI
 enum CallStep<'tcx> {
     Builtin(Ty<'tcx>),
     DeferredClosure(ty::FnSig<'tcx>),
-    /// e.g., enum variant constructors
+    /// e.g. enum variant constructors
     Overloaded(MethodCallee<'tcx>),
 }
 
@@ -110,11 +110,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 // fnmut vs fnonce. If so, we have to defer further processing.
                 if self.closure_kind(def_id, substs).is_none() {
                     let closure_ty = self.closure_sig(def_id, substs);
-                    let fn_sig = self.replace_bound_vars_with_fresh_vars(
-                        call_expr.span,
-                        infer::FnCall,
-                        &closure_ty
-                    ).0;
+                    let fn_sig = self.replace_late_bound_regions_with_fresh_var(call_expr.span,
+                                                                   infer::FnCall,
+                                                                   &closure_ty)
+                        .0;
                     let adjustments = autoderef.adjust_steps(Needs::None);
                     self.record_deferred_call_resolution(def_id, DeferredCallResolution {
                         call_expr,
@@ -167,31 +166,34 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 None => continue,
             };
 
-            if let Some(ok) = self.lookup_method_in_trait(call_expr.span,
-                                                          method_name,
-                                                          trait_def_id,
-                                                          adjusted_ty,
-                                                          None) {
-                let method = self.register_infer_ok_obligations(ok);
-                let mut autoref = None;
-                if borrow {
-                    if let ty::Ref(region, _, mutbl) = method.sig.inputs()[0].sty {
-                        let mutbl = match mutbl {
-                            hir::MutImmutable => AutoBorrowMutability::Immutable,
-                            hir::MutMutable => AutoBorrowMutability::Mutable {
-                                // For initial two-phase borrow
-                                // deployment, conservatively omit
-                                // overloaded function call ops.
-                                allow_two_phase_borrow: AllowTwoPhase::No,
-                            }
-                        };
-                        autoref = Some(Adjustment {
-                            kind: Adjust::Borrow(AutoBorrow::Ref(region, mutbl)),
-                            target: method.sig.inputs()[0]
-                        });
+            match self.lookup_method_in_trait(call_expr.span,
+                                              method_name,
+                                              trait_def_id,
+                                              adjusted_ty,
+                                              None) {
+                None => continue,
+                Some(ok) => {
+                    let method = self.register_infer_ok_obligations(ok);
+                    let mut autoref = None;
+                    if borrow {
+                        if let ty::Ref(region, _, mutbl) = method.sig.inputs()[0].sty {
+                            let mutbl = match mutbl {
+                                hir::MutImmutable => AutoBorrowMutability::Immutable,
+                                hir::MutMutable => AutoBorrowMutability::Mutable {
+                                    // For initial two-phase borrow
+                                    // deployment, conservatively omit
+                                    // overloaded function call ops.
+                                    allow_two_phase_borrow: AllowTwoPhase::No,
+                                }
+                            };
+                            autoref = Some(Adjustment {
+                                kind: Adjust::Borrow(AutoBorrow::Ref(region, mutbl)),
+                                target: method.sig.inputs()[0]
+                            });
+                        }
                     }
+                    return Some((autoref, method));
                 }
-                return Some((autoref, method));
             }
         }
 
@@ -206,7 +208,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                             -> Ty<'tcx> {
         let (fn_sig, def_span) = match callee_ty.sty {
             ty::FnDef(def_id, _) => {
-                (callee_ty.fn_sig(self.tcx), self.tcx.hir().span_if_local(def_id))
+                (callee_ty.fn_sig(self.tcx), self.tcx.hir.span_if_local(def_id))
             }
             ty::FnPtr(sig) => (sig, None),
             ref t => {
@@ -214,88 +216,57 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 if let &ty::Adt(adt_def, ..) = t {
                     if adt_def.is_enum() {
                         if let hir::ExprKind::Call(ref expr, _) = call_expr.node {
-                            unit_variant = Some(self.tcx.hir().node_to_pretty_string(expr.id))
+                            unit_variant = Some(self.tcx.hir.node_to_pretty_string(expr.id))
                         }
                     }
                 }
 
-                if let hir::ExprKind::Call(ref callee, _) = call_expr.node {
-                    let mut err = type_error_struct!(
-                        self.tcx.sess,
-                        callee.span,
-                        callee_ty,
-                        E0618,
-                        "expected function, found {}",
-                        match unit_variant {
-                            Some(ref path) => format!("enum variant `{}`", path),
-                            None => format!("`{}`", callee_ty),
-                        });
+                let mut err = type_error_struct!(
+                    self.tcx.sess,
+                    call_expr.span,
+                    callee_ty,
+                    E0618,
+                    "expected function, found {}",
+                    match unit_variant {
+                        Some(ref path) => format!("enum variant `{}`", path),
+                        None => format!("`{}`", callee_ty),
+                    });
 
-                    if let Some(ref path) = unit_variant {
-                        err.span_suggestion_with_applicability(
-                            call_expr.span,
-                            &format!("`{}` is a unit variant, you need to write it \
-                                      without the parenthesis", path),
-                            path.to_string(),
-                            Applicability::MachineApplicable
-                        );
-                    }
+                err.span_label(call_expr.span, "not a function");
 
-                    let mut inner_callee_path = None;
-                    let def = match callee.node {
-                        hir::ExprKind::Path(ref qpath) => {
-                            self.tables.borrow().qpath_def(qpath, callee.hir_id)
-                        },
-                        hir::ExprKind::Call(ref inner_callee, _) => {
-                            // If the call spans more than one line and the callee kind is
-                            // itself another `ExprCall`, that's a clue that we might just be
-                            // missing a semicolon (Issue #51055)
-                            let call_is_multiline = self.tcx.sess.source_map()
-                                .is_multiline(call_expr.span);
-                            if call_is_multiline {
-                                let span = self.tcx.sess.source_map().next_point(callee.span);
-                                err.span_suggestion_with_applicability(
-                                    span,
-                                    "try adding a semicolon",
-                                    ";".to_owned(),
-                                    Applicability::MaybeIncorrect
-                                );
-                            }
-                            if let hir::ExprKind::Path(ref inner_qpath) = inner_callee.node {
-                                inner_callee_path = Some(inner_qpath);
-                                self.tables.borrow().qpath_def(inner_qpath, inner_callee.hir_id)
-                            } else {
-                                Def::Err
-                            }
-                        },
-                        _ => {
-                            Def::Err
-                        }
+                if let Some(ref path) = unit_variant {
+                    err.span_suggestion_with_applicability(
+                        call_expr.span,
+                        &format!("`{}` is a unit variant, you need to write it \
+                                 without the parenthesis", path),
+                        path.to_string(),
+                        Applicability::MachineApplicable
+                    );
+                }
+
+                if let hir::ExprKind::Call(ref expr, _) = call_expr.node {
+                    let def = if let hir::ExprKind::Path(ref qpath) = expr.node {
+                        self.tables.borrow().qpath_def(qpath, expr.hir_id)
+                    } else {
+                        Def::Err
                     };
-
-                    err.span_label(call_expr.span, "call expression requires function");
-
                     let def_span = match def {
                         Def::Err => None,
                         Def::Local(id) | Def::Upvar(id, ..) => {
-                            Some(self.tcx.hir().span(id))
+                            Some(self.tcx.hir.span(id))
                         }
-                        _ => self.tcx.hir().span_if_local(def.def_id())
+                        _ => self.tcx.hir.span_if_local(def.def_id())
                     };
                     if let Some(span) = def_span {
-                        let label = match (unit_variant, inner_callee_path) {
-                            (Some(path), _) => format!("`{}` defined here", path),
-                            (_, Some(hir::QPath::Resolved(_, path))) => format!(
-                                "`{}` defined here returns `{}`", path, callee_ty.to_string()
-                            ),
-                            _ => format!("`{}` defined here", callee_ty.to_string()),
+                        let name = match unit_variant {
+                            Some(path) => path,
+                            None => callee_ty.to_string(),
                         };
-                        err.span_label(span, label);
+                        err.span_label(span, format!("`{}` defined here", name));
                     }
-                    err.emit();
-                } else {
-                    bug!("call_expr.node should be an ExprKind::Call, got {:?}", call_expr.node);
                 }
+
+                err.emit();
 
                 // This is the "default" function signature, used in case of error.
                 // In that case, we check each argument against "error" in order to
@@ -316,7 +287,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // previously appeared within a `Binder<>` and hence would not
         // have been normalized before.
         let fn_sig =
-            self.replace_bound_vars_with_fresh_vars(call_expr.span, infer::FnCall, &fn_sig)
+            self.replace_late_bound_regions_with_fresh_var(call_expr.span, infer::FnCall, &fn_sig)
                 .0;
         let fn_sig = self.normalize_associated_types_in(call_expr.span, &fn_sig);
 

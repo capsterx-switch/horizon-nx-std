@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use build::{BlockAnd, BlockAndExtension, BlockFrame, Builder};
+use build::{BlockAnd, BlockAndExtension, Builder};
 use build::ForGuard::OutsideGuard;
 use build::matches::ArmHasGuard;
 use hair::*;
@@ -90,16 +90,15 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
 
         let source_info = this.source_info(span);
         for stmt in stmts {
-            let Stmt { kind, opt_destruction_scope, span: stmt_span } = this.hir.mirror(stmt);
+            let Stmt { kind, opt_destruction_scope } = this.hir.mirror(stmt);
             match kind {
                 StmtKind::Expr { scope, expr } => {
-                    this.block_context.push(BlockFrame::Statement { ignores_expr_result: true });
                     unpack!(block = this.in_opt_scope(
                         opt_destruction_scope.map(|de|(de, source_info)), block, |this| {
                             let si = (scope, source_info);
                             this.in_scope(si, LintLevel::Inherited, block, |this| {
                                 let expr = this.hir.mirror(expr);
-                                this.stmt_expr(block, expr, Some(stmt_span))
+                                this.stmt_expr(block, expr)
                             })
                         }));
                 }
@@ -110,14 +109,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                     initializer,
                     lint_level
                 } => {
-                    let ignores_expr_result = if let PatternKind::Wild = *pattern.kind {
-                        true
-                    } else {
-                        false
-                    };
-                    this.block_context.push(BlockFrame::Statement { ignores_expr_result });
-
-                    // Enter the remainder scope, i.e., the bindings' destruction scope.
+                    // Enter the remainder scope, i.e. the bindings' destruction scope.
                     this.push_scope((remainder_scope, source_info));
                     let_scope_stack.push(remainder_scope);
 
@@ -151,13 +143,10 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                             None, remainder_span, lint_level, slice::from_ref(&pattern),
                             ArmHasGuard(false), None);
 
-                        this.visit_bindings(
-                            &pattern,
-                            &PatternTypeProjections::none(),
-                            &mut |this, _, _, _, node, span, _, _| {
-                                this.storage_live_binding(block, node, span, OutsideGuard);
-                                this.schedule_drop_for_binding(node, span, OutsideGuard);
-                            })
+                        this.visit_bindings(&pattern, None, &mut |this, _, _, _, node, span, _, _| {
+                            this.storage_live_binding(block, node, span, OutsideGuard);
+                            this.schedule_drop_for_binding(node, span, OutsideGuard);
+                        })
                     }
 
                     // Enter the source scope, after evaluating the initializer.
@@ -166,30 +155,19 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                     }
                 }
             }
-
-            let popped = this.block_context.pop();
-            assert!(popped.map_or(false, |bf|bf.is_statement()));
         }
-
         // Then, the block may have an optional trailing expression which is a “return” value
-        // of the block, which is stored into `destination`.
-        let tcx = this.hir.tcx();
-        let destination_ty = destination.ty(&this.local_decls, tcx).to_ty(tcx);
+        // of the block.
         if let Some(expr) = expr {
-            let tail_result_is_ignored = destination_ty.is_unit() ||
-                this.block_context.currently_ignores_tail_results();
-            this.block_context.push(BlockFrame::TailExpr { tail_result_is_ignored });
-
             unpack!(block = this.into(destination, block, expr));
-            let popped = this.block_context.pop();
-
-            assert!(popped.map_or(false, |bf|bf.is_tail_expr()));
         } else {
             // If a block has no trailing expression, then it is given an implicit return type.
             // This return type is usually `()`, unless the block is diverging, in which case the
             // return type is `!`. For the unit type, we need to actually return the unit, but in
             // the case of `!`, no return value is required, as the block will never return.
-            if destination_ty.is_unit() {
+            let tcx = this.hir.tcx();
+            let ty = destination.ty(&this.local_decls, tcx).to_ty(tcx);
+            if ty.is_unit() {
                 // We only want to assign an implicit `()` as the return value of the block if the
                 // block does not diverge. (Otherwise, we may try to assign a unit to a `!`-type.)
                 this.cfg.push_assign_unit(block, source_info, destination);

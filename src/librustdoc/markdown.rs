@@ -11,17 +11,20 @@
 use std::default::Default;
 use std::fs::File;
 use std::io::prelude::*;
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::cell::RefCell;
 
 use errors;
+use getopts;
 use testing;
+use rustc::session::search_paths::SearchPaths;
+use rustc::session::config::{Externs, CodegenOptions};
 use syntax::source_map::DUMMY_SP;
 use syntax::feature_gate::UnstableFeatures;
+use syntax::edition::Edition;
 
-use externalfiles::{LoadStringError, load_string};
+use externalfiles::{ExternalHtml, LoadStringError, load_string};
 
-use config::{Options, RenderOptions};
 use html::escape::Escape;
 use html::markdown;
 use html::markdown::{ErrorCodes, IdMap, Markdown, MarkdownWithToc, find_testable_code};
@@ -35,7 +38,7 @@ fn extract_leading_metadata<'a>(s: &'a str) -> (Vec<&'a str>, &'a str) {
     for line in s.lines() {
         if line.starts_with("# ") || line.starts_with("%") {
             // trim the whitespace after the symbol
-            metadata.push(line[1..].trim_start());
+            metadata.push(line[1..].trim_left());
             count += line.len() + 1;
         } else {
             return (metadata, &s[count..]);
@@ -46,27 +49,26 @@ fn extract_leading_metadata<'a>(s: &'a str) -> (Vec<&'a str>, &'a str) {
     (metadata, "")
 }
 
-/// Render `input` (e.g., "foo.md") into an HTML file in `output`
-/// (e.g., output = "bar" => "bar/foo.html").
-pub fn render(input: PathBuf, options: RenderOptions, diag: &errors::Handler) -> isize {
-    let mut output = options.output;
+/// Render `input` (e.g. "foo.md") into an HTML file in `output`
+/// (e.g. output = "bar" => "bar/foo.html").
+pub fn render(input: &Path, mut output: PathBuf, matches: &getopts::Matches,
+              external_html: &ExternalHtml, include_toc: bool, diag: &errors::Handler) -> isize {
     output.push(input.file_stem().unwrap());
     output.set_extension("html");
 
     let mut css = String::new();
-    for name in &options.markdown_css {
+    for name in &matches.opt_strs("markdown-css") {
         let s = format!("<link rel=\"stylesheet\" type=\"text/css\" href=\"{}\">\n", name);
         css.push_str(&s)
     }
 
-    let input_str = match load_string(&input, diag) {
+    let input_str = match load_string(input, diag) {
         Ok(s) => s,
         Err(LoadStringError::ReadFail) => return 1,
         Err(LoadStringError::BadUtf8) => return 2,
     };
-    let playground_url = options.markdown_playground_url
-                            .or(options.playground_url);
-    if let Some(playground) = playground_url {
+    if let Some(playground) = matches.opt_str("markdown-playground-url").or(
+                              matches.opt_str("playground-url")) {
         markdown::PLAYGROUND.with(|s| { *s.borrow_mut() = Some((None, playground)); });
     }
 
@@ -75,7 +77,7 @@ pub fn render(input: PathBuf, options: RenderOptions, diag: &errors::Handler) ->
             diag.struct_err(&format!("{}: {}", output.display(), e)).emit();
             return 4;
         }
-        Ok(f) => f,
+        Ok(f) => f
     };
 
     let (metadata, text) = extract_leading_metadata(&input_str);
@@ -87,7 +89,7 @@ pub fn render(input: PathBuf, options: RenderOptions, diag: &errors::Handler) ->
 
     let mut ids = IdMap::new();
     let error_codes = ErrorCodes::from(UnstableFeatures::from_environment().is_nightly_build());
-    let text = if !options.markdown_no_toc {
+    let text = if include_toc {
         MarkdownWithToc(text, RefCell::new(&mut ids), error_codes).to_string()
     } else {
         Markdown(text, &[], RefCell::new(&mut ids), error_codes).to_string()
@@ -122,10 +124,10 @@ pub fn render(input: PathBuf, options: RenderOptions, diag: &errors::Handler) ->
 </html>"#,
         title = Escape(title),
         css = css,
-        in_header = options.external_html.in_header,
-        before_content = options.external_html.before_content,
+        in_header = external_html.in_header,
+        before_content = external_html.before_content,
         text = text,
-        after_content = options.external_html.after_content,
+        after_content = external_html.after_content,
     );
 
     match err {
@@ -138,8 +140,11 @@ pub fn render(input: PathBuf, options: RenderOptions, diag: &errors::Handler) ->
 }
 
 /// Run any tests/code examples in the markdown file `input`.
-pub fn test(mut options: Options, diag: &errors::Handler) -> isize {
-    let input_str = match load_string(&options.input, diag) {
+pub fn test(input: &str, cfgs: Vec<String>, libs: SearchPaths, externs: Externs,
+            mut test_args: Vec<String>, maybe_sysroot: Option<PathBuf>,
+            display_warnings: bool, linker: Option<PathBuf>, edition: Edition,
+            cg: CodegenOptions, diag: &errors::Handler) -> isize {
+    let input_str = match load_string(input, diag) {
         Ok(s) => s,
         Err(LoadStringError::ReadFail) => return 1,
         Err(LoadStringError::BadUtf8) => return 2,
@@ -147,20 +152,19 @@ pub fn test(mut options: Options, diag: &errors::Handler) -> isize {
 
     let mut opts = TestOptions::default();
     opts.no_crate_inject = true;
-    opts.display_warnings = options.display_warnings;
-    let mut collector = Collector::new(options.input.display().to_string(), options.cfgs,
-                                       options.libs, options.codegen_options, options.externs,
-                                       true, opts, options.maybe_sysroot, None,
-                                       Some(options.input),
-                                       options.linker, options.edition);
+    opts.display_warnings = display_warnings;
+    let mut collector = Collector::new(input.to_owned(), cfgs, libs, cg, externs,
+                                       true, opts, maybe_sysroot, None,
+                                       Some(PathBuf::from(input)),
+                                       linker, edition);
     collector.set_position(DUMMY_SP);
     let codes = ErrorCodes::from(UnstableFeatures::from_environment().is_nightly_build());
     let res = find_testable_code(&input_str, &mut collector, codes);
     if let Err(err) = res {
         diag.span_warn(DUMMY_SP, &err.to_string());
     }
-    options.test_args.insert(0, "rustdoctest".to_string());
-    testing::test_main(&options.test_args, collector.tests,
-                       testing::Options::new().display_output(options.display_warnings));
+    test_args.insert(0, "rustdoctest".to_string());
+    testing::test_main(&test_args, collector.tests,
+                       testing::Options::new().display_output(display_warnings));
     0
 }

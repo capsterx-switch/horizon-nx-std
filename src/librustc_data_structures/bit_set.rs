@@ -423,6 +423,15 @@ pub enum HybridBitSet<T: Idx> {
 }
 
 impl<T: Idx> HybridBitSet<T> {
+    // FIXME: This function is used in conjunction with `mem::replace()` in
+    // several pieces of awful code below. I can't work out how else to appease
+    // the borrow checker.
+    fn dummy() -> Self {
+        // The cheapest HybridBitSet to construct, which is only used to get
+        // around the borrow checker.
+        HybridBitSet::Sparse(SparseBitSet::new_empty(0))
+    }
+
     pub fn new_empty(domain_size: usize) -> Self {
         HybridBitSet::Sparse(SparseBitSet::new_empty(domain_size))
     }
@@ -478,14 +487,20 @@ impl<T: Idx> HybridBitSet<T> {
                 // that doesn't matter because `elem` is already present.
                 false
             }
-            HybridBitSet::Sparse(sparse) => {
+            HybridBitSet::Sparse(_) => {
                 // The set is sparse and full. Convert to a dense set.
-                let mut dense = sparse.to_dense();
-                let changed = dense.insert(elem);
-                assert!(changed);
-                *self = HybridBitSet::Dense(dense);
-                changed
+                match mem::replace(self, HybridBitSet::dummy()) {
+                    HybridBitSet::Sparse(sparse) => {
+                        let mut dense = sparse.to_dense();
+                        let changed = dense.insert(elem);
+                        assert!(changed);
+                        *self = HybridBitSet::Dense(dense);
+                        changed
+                    }
+                    _ => unreachable!()
+                }
             }
+
             HybridBitSet::Dense(dense) => dense.insert(elem),
         }
     }
@@ -510,26 +525,33 @@ impl<T: Idx> HybridBitSet<T> {
 
     pub fn union(&mut self, other: &HybridBitSet<T>) -> bool {
         match self {
-            HybridBitSet::Sparse(self_sparse) => {
+            HybridBitSet::Sparse(_) => {
                 match other {
                     HybridBitSet::Sparse(other_sparse) => {
                         // Both sets are sparse. Add the elements in
-                        // `other_sparse` to `self` one at a time. This
-                        // may or may not cause `self` to be densified.
+                        // `other_sparse` to `self_hybrid` one at a time. This
+                        // may or may not cause `self_hybrid` to be densified.
                         assert_eq!(self.domain_size(), other.domain_size());
+                        let mut self_hybrid = mem::replace(self, HybridBitSet::dummy());
                         let mut changed = false;
                         for elem in other_sparse.iter() {
-                            changed |= self.insert(*elem);
+                            changed |= self_hybrid.insert(*elem);
                         }
+                        *self = self_hybrid;
                         changed
                     }
                     HybridBitSet::Dense(other_dense) => {
                         // `self` is sparse and `other` is dense. Densify
                         // `self` and then do the bitwise union.
-                        let mut new_dense = self_sparse.to_dense();
-                        let changed = new_dense.union(other_dense);
-                        *self = HybridBitSet::Dense(new_dense);
-                        changed
+                        match mem::replace(self, HybridBitSet::dummy()) {
+                            HybridBitSet::Sparse(self_sparse) => {
+                                let mut new_dense = self_sparse.to_dense();
+                                let changed = new_dense.union(other_dense);
+                                *self = HybridBitSet::Dense(new_dense);
+                                changed
+                            }
+                            _ => unreachable!()
+                        }
                     }
                 }
             }

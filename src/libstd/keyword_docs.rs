@@ -227,494 +227,70 @@ mod extern_keyword { }
 
 #[doc(keyword = "fn")]
 //
-/// The keyword for defining functions.
+/// The `fn` keyword.
 ///
-/// Functions are the primary way code is executed within Rust. Function blocks, usually just
-/// called functions, can be defined in a variety of different places and be assigned many
-/// different attributes and modifiers.
+/// The `fn` keyword is used to declare a function.
 ///
-/// Standalone functions that just sit within a module not attached to anything else are common,
-/// but most functions will end up being inside [`impl`] blocks, either on another type itself, or
-/// as a trait impl for that type.
+/// Example:
 ///
 /// ```rust
-/// fn standalone_function() {
-///     // code
-/// }
-///
-/// pub fn public_thing(argument: bool) -> String {
-///     // code
-///     # "".to_string()
-/// }
-///
-/// struct Thing {
-///     foo: i32,
-/// }
-///
-/// impl Thing {
-///     pub fn new() -> Self {
-///         Self {
-///             foo: 42,
-///         }
-///     }
+/// fn some_function() {
+///     // code goes in here
 /// }
 /// ```
 ///
-/// In addition to presenting fixed types in the form of `fn name(arg: type, ..) -> return_type`,
-/// functions can also declare a list of type parameters along with trait bounds that they fall
-/// into.
+/// For more information about functions, take a look at the [Rust Book][book].
 ///
-/// ```rust
-/// fn generic_function<T: Clone>(x: T) -> (T, T, T) {
-///     (x.clone(), x.clone(), x.clone())
-/// }
-///
-/// fn generic_where<T>(x: T) -> T
-///     where T: std::ops::Add<Output=T> + Copy
-/// {
-///     x + x + x
-/// }
-/// ```
-///
-/// Declaring trait bounds in the angle brackets is functionally identical to using a `where`
-/// clause. It's up to the programmer to decide which works better in each situation, but `where`
-/// tends to be better when things get longer than one line.
-///
-/// Along with being made public via `pub`, `fn` can also have an [`extern`] added for use in
-/// FFI.
-///
-/// For more information on the various types of functions and how they're used, consult the [Rust
-/// book] or the [Reference].
-///
-/// [`impl`]: keyword.impl.html
-/// [`extern`]: keyword.extern.html
-/// [Rust book]: https://doc.rust-lang.org/book/second-edition/ch03-03-how-functions-work.html
-/// [Reference]: https://doc.rust-lang.org/reference/items/functions.html
+/// [book]: https://doc.rust-lang.org/book/second-edition/ch03-03-how-functions-work.html
 mod fn_keyword { }
-
-#[doc(keyword = "for")]
-//
-/// The `for` keyword.
-///
-/// `for` is primarily used in for-in-loops, but it has a few other pieces of syntactic uses such as
-/// `impl Trait for Type` (see [`impl`] for more info on that). for-in-loops, or to be more
-/// precise, iterator loops, are a simple syntactic sugar over an exceedingly common practice
-/// within Rust, which is to loop over an iterator until that iterator returns None (or `break`
-/// is called).
-///
-/// ```rust
-/// for i in 0..5 {
-///     println!("{}", i * 2);
-/// }
-///
-/// for i in std::iter::repeat(5) {
-///     println!("turns out {} never stops being 5", i);
-///     break; // would loop forever otherwise
-/// }
-///
-/// 'outer: for x in 5..50 {
-///     for y in 0..10 {
-///         if x == y {
-///             break 'outer;
-///         }
-///     }
-/// }
-/// ```
-///
-/// As shown in the example above, `for` loops (along with all other loops) can be tagged, using
-/// similar syntax to lifetimes (only visually similar, entirely distinct in practice). Giving the
-/// same tag to `break` breaks the tagged loop, which is useful for inner loops. It is definitely
-/// not a goto.
-///
-/// A `for` loop expands as shown:
-///
-/// ```rust
-/// # fn code() { }
-/// # let iterator = 0..2;
-/// for loop_variable in iterator {
-///     code()
-/// }
-/// ```
-///
-/// ```rust
-/// # fn code() { }
-/// # let iterator = 0..2;
-/// {
-///     let mut _iter = std::iter::IntoIterator::into_iter(iterator);
-///     loop {
-///         match _iter.next() {
-///             Some(loop_variable) => {
-///                 code()
-///             },
-///             None => break,
-///         }
-///     }
-/// }
-/// ```
-///
-/// More details on the functionality shown can be seen at the [`IntoIterator`] docs.
-///
-/// For more information on for-loops, see the [Rust book] or the [Reference].
-///
-/// [`impl`]: keyword.impl.html
-/// [`IntoIterator`]: iter/trait.IntoIterator.html
-/// [Rust book]:
-/// https://doc.rust-lang.org/book/2018-edition/ch03-05-control-flow.html#looping-through-a-collection-with-for
-/// [Reference]: https://doc.rust-lang.org/reference/expressions/loop-expr.html#iterator-loops
-mod for_keyword { }
-
-#[doc(keyword = "if")]
-//
-/// If statements and expressions.
-///
-/// `if` is a familiar construct to most programmers, and is the main way you'll often do logic in
-/// your code. However, unlike in most languages, `if` blocks can also act as expressions.
-///
-/// ```rust
-/// # let rude = true;
-/// if 1 == 2 {
-///     println!("whoops, mathematics broke");
-/// } else {
-///     println!("everything's fine!");
-/// }
-///
-/// let greeting = if rude {
-///     "sup nerd."
-/// } else {
-///     "hello, friend!"
-/// };
-///
-/// if let Ok(x) = "123".parse::<i32>() {
-///     println!("{} double that and you get {}!", greeting, x * 2);
-/// }
-/// ```
-///
-/// Shown above are the three typical forms an `if` block comes in. First is the usual kind of
-/// thing you'd see in many languages, with an optional `else` block. Second uses `if` as an
-/// expression, which is only possible if all branches return the same type. An `if` expression can
-/// be used everywhere you'd expect. The third kind of `if` block is an `if let` block, which
-/// behaves similarly to using a `match` expression:
-///
-/// ```rust
-/// if let Some(x) = Some(123) {
-///     // code
-///     # let _ = x;
-/// } else {
-///     // something else
-/// }
-///
-/// match Some(123) {
-///     Some(x) => {
-///         // code
-///         # let _ = x;
-///     },
-///     _ => {
-///         // something else
-///     },
-/// }
-/// ```
-///
-/// Each kind of `if` expression can be mixed and matched as needed.
-///
-/// ```rust
-/// if true == false {
-///     println!("oh no");
-/// } else if "something" == "other thing" {
-///     println!("oh dear");
-/// } else if let Some(200) = "blarg".parse::<i32>().ok() {
-///     println!("uh oh");
-/// } else {
-///     println!("phew, nothing's broken");
-/// }
-/// ```
-///
-/// The `if` keyword is used in one other place in Rust, namely as a part of pattern matching
-/// itself, allowing patterns such as `Some(x) if x > 200` to be used.
-///
-/// For more information on `if` expressions, see the [Rust book] or the [Reference].
-///
-/// [Rust book]:
-/// https://doc.rust-lang.org/stable/book/2018-edition/ch03-05-control-flow.html#if-expressions
-/// [Reference]: https://doc.rust-lang.org/reference/expressions/if-expr.html
-mod if_keyword { }
-
-#[doc(keyword = "impl")]
-//
-/// The implementation-defining keyword.
-///
-/// The `impl` keyword is primarily used to define implementations on types. Inherent
-/// implementations are standalone, while trait implementations are used to implement traits for
-/// types, or other traits.
-///
-/// Functions and consts can both be defined in an implementation. A function defined in an
-/// `impl` block can be standalone, meaning it would be called like `Foo::bar()`. If the function
-/// takes `self`, `&self`, or `&mut self` as its first argument, it can also be called using
-/// method-call syntax, a familiar feature to any object oriented programmer, like `foo.bar()`.
-///
-/// ```rust
-/// struct Example {
-///     number: i32,
-/// }
-///
-/// impl Example {
-///     fn boo() {
-///         println!("boo! Example::boo() was called!");
-///     }
-///
-///     fn answer(&mut self) {
-///         self.number += 42;
-///     }
-///
-///     fn get_number(&self) -> i32 {
-///         self.number
-///     }
-/// }
-///
-/// trait Thingy {
-///     fn do_thingy(&self);
-/// }
-///
-/// impl Thingy for Example {
-///     fn do_thingy(&self) {
-///         println!("doing a thing! also, number is {}!", self.number);
-///     }
-/// }
-/// ```
-///
-/// For more information on implementations, see the [Rust book][book1] or the [Reference].
-///
-/// The other use of the `impl` keyword is in `impl Trait` syntax, which can be seen as a shorthand
-/// for "a concrete type that implements this trait". Its primary use is working with closures,
-/// which have type definitions generated at compile time that can't be simply typed out.
-///
-/// ```rust
-/// fn thing_returning_closure() -> impl Fn(i32) -> bool {
-///     println!("here's a closure for you!");
-///     |x: i32| x % 3 == 0
-/// }
-/// ```
-///
-/// For more information on `impl Trait` syntax, see the [Rust book][book2].
-///
-/// [book1]: https://doc.rust-lang.org/stable/book/2018-edition/ch05-03-method-syntax.html
-/// [Reference]: https://doc.rust-lang.org/reference/items/implementations.html
-/// [book2]:
-/// https://doc.rust-lang.org/stable/book/2018-edition/ch10-02-traits.html#returning-traits
-mod impl_keyword { }
 
 #[doc(keyword = "let")]
 //
-/// The variable binding keyword.
+/// The `let` keyword.
 ///
-/// The primary use for the `let` keyword is in `let` statements, which are used to introduce a new
-/// set of variables into the current scope, as given by a pattern.
+/// The `let` keyword is used to declare a variable.
+///
+/// Example:
 ///
 /// ```rust
 /// # #![allow(unused_assignments)]
-/// let thing1: i32 = 100;
-/// let thing2 = 200 + thing1;
-///
-/// let mut changing_thing = true;
-/// changing_thing = false;
-///
-/// let (part1, part2) = ("first", "second");
-///
-/// struct Example {
-///     a: bool,
-///     b: u64,
-/// }
-///
-/// let Example { a, b: _ } = Example {
-///     a: true,
-///     b: 10004,
-/// };
-/// assert!(a);
+/// let x = 3; // We create a variable named `x` with the value `3`.
 /// ```
 ///
-/// The pattern is most commonly a single variable, which means no pattern matching is done and
-/// the expression given is bound to the variable. Apart from that, patterns used in `let` bindings
-/// can be as complicated as needed, given that the pattern is exhaustive. See the [Rust
-/// book][book1] for more information on pattern matching. The type of the pattern is optionally
-/// given afterwards, but if left blank is automatically inferred by the compiler if possible.
+/// By default, all variables are **not** mutable. If you want a mutable variable,
+/// you'll have to use the `mut` keyword.
 ///
-/// Variables in Rust are immutable by default, and require the `mut` keyword to be made mutable.
-///
-/// Multiple variables can be defined with the same name, known as shadowing. This doesn't affect
-/// the original variable in any way beyond being unable to directly access it beyond the point of
-/// shadowing. It continues to remain in scope, getting dropped only when it falls out of scope.
-/// Shadowed variables don't need to have the same type as the variables shadowing them.
+/// Example:
 ///
 /// ```rust
-/// let shadowing_example = true;
-/// let shadowing_example = 123.4;
-/// let shadowing_example = shadowing_example as u32;
-/// let mut shadowing_example = format!("cool! {}", shadowing_example);
-/// shadowing_example += " something else!"; // not shadowing
+/// # #![allow(unused_assignments)]
+/// let mut x = 3; // We create a mutable variable named `x` with the value `3`.
+///
+/// x += 4; // `x` is now equal to `7`.
 /// ```
 ///
-/// Other places the `let` keyword is used include along with [`if`], in the form of `if let`
-/// expressions. They're useful if the pattern being matched isn't exhaustive, such as with
-/// enumerations. `while let` also exists, which runs a loop with a pattern matched value until
-/// that pattern can't be matched.
+/// For more information about the `let` keyword, take a look at the [Rust Book][book].
 ///
-/// For more information on the `let` keyword, see the [Rust book] or the [Reference]
-///
-/// [book1]: https://doc.rust-lang.org/stable/book/2018-edition/ch06-02-match.html
-/// [`if`]: keyword.if.html
-/// [book2]:
-/// https://doc.rust-lang.org/stable/book/2018-edition/ch18-01-all-the-places-for-patterns.html#let-statements
-/// [Reference]: https://doc.rust-lang.org/reference/statements.html#let-statements
+/// [book]: https://doc.rust-lang.org/book/second-edition/ch03-01-variables-and-mutability.html
 mod let_keyword { }
-
-#[doc(keyword = "loop")]
-//
-/// The loop-defining keyword.
-///
-/// `loop` is used to define the simplest kind of loop supported in Rust. It runs the code inside
-/// it until the code uses `break` or the program exits.
-///
-/// ```rust
-/// loop {
-///     println!("hello world forever!");
-///     # break;
-/// }
-///
-/// let mut i = 0;
-/// loop {
-///     println!("i is {}", i);
-///     if i > 10 {
-///         break;
-///     }
-///     i += 1;
-/// }
-/// ```
-///
-/// Unlike the other kinds of loops in Rust (`while`, `while let`, and `for`), loops can be used as
-/// expressions that return values via `break`.
-///
-/// ```rust
-/// let mut i = 1;
-/// let something = loop {
-///     i *= 2;
-///     if i > 100 {
-///         break i;
-///     }
-/// };
-/// assert_eq!(something, 128);
-/// ```
-///
-/// Every `break` in a loop has to have the same type. When it's not explicitly giving something,
-/// `break;` returns `()`.
-///
-/// For more information on `loop` and loops in general, see the [Reference].
-///
-/// [Reference]: https://doc.rust-lang.org/reference/expressions/loop-expr.html
-mod loop_keyword { }
 
 #[doc(keyword = "struct")]
 //
-/// The keyword used to define structs.
+/// The `struct` keyword.
 ///
-/// Structs in Rust come in three flavors: Structs with named fields, tuple structs, and unit
-/// structs.
+/// The `struct` keyword is used to define a struct type.
 ///
-/// ```rust
-/// struct Regular {
-///     field1: f32,
+/// Example:
+///
+/// ```
+/// struct Foo {
+///     field1: u32,
 ///     field2: String,
-///     pub field3: bool
-/// }
-///
-/// struct Tuple(u32, String);
-///
-/// struct Unit;
-/// ```
-///
-/// Regular structs are the most commonly used. Each field defined within them has a name and a
-/// type, and once defined can be accessed using `example_struct.field` syntax. The fields of a
-/// struct share its mutability, so `foo.bar = 2;` would only be valid if `foo` was mutable. Adding
-/// `pub` to a field makes it visible to code in other modules, as well as allowing it to be
-/// directly accessed and modified.
-///
-/// Tuple structs are similar to regular structs, but its fields have no names. They are used like
-/// tuples, with deconstruction possible via `let TupleStruct(x, y) = foo;` syntax.  For accessing
-/// individual variables, the same syntax is used as with regular tuples, namely `foo.0`, `foo.1`,
-/// etc, starting at zero.
-///
-/// Unit structs are most commonly used as marker. They have a size of zero bytes, but unlike empty
-/// enums they can be instantiated, making them isomorphic to the unit type `()`. Unit structs are
-/// useful when you need to implement a trait on something, but don't need to store any data inside
-/// it.
-///
-/// # Instantiation
-///
-/// Structs can be instantiated in different ways, all of which can be mixed and
-/// matched as needed. The most common way to make a new struct is via a constructor method such as
-/// `new()`, but when that isn't available (or you're writing the constructor itself), struct
-/// literal syntax is used:
-///
-/// ```rust
-/// # struct Foo { field1: f32, field2: String, etc: bool }
-/// let example = Foo {
-///     field1: 42.0,
-///     field2: "blah".to_string(),
-///     etc: true,
-/// };
-/// ```
-///
-/// It's only possible to directly instantiate a struct using struct literal syntax when all of its
-/// fields are visible to you.
-///
-/// There are a handful of shortcuts provided to make writing constructors more convenient, most
-/// common of which is the Field Init shorthand. When there is a variable and a field of the same
-/// name, the assignment can be simplified from `field: field` into simply `field`. The following
-/// example of a hypothetical constructor demonstrates this:
-///
-/// ```rust
-/// struct User {
-///     name: String,
-///     admin: bool,
-/// }
-///
-/// impl User {
-///     pub fn new(name: String) -> Self {
-///         Self {
-///             name,
-///             admin: false,
-///         }
-///     }
 /// }
 /// ```
 ///
-/// Another shortcut for struct instantiation is available, used when you need to make a new
-/// struct that has the same values as most of a previous struct of the same type, called struct
-/// update syntax:
+/// There are different kinds of structs. For more information, take a look at the
+/// [Rust Book][book].
 ///
-/// ```rust
-/// # struct Foo { field1: String, field2: () }
-/// # let thing = Foo { field1: "".to_string(), field2: () };
-/// let updated_thing = Foo {
-///     field1: "a new value".to_string(),
-///     ..thing
-/// };
-/// ```
-///
-/// Tuple structs are instantiated in the same way as tuples themselves, except with the struct's
-/// name as a prefix: `Foo(123, false, 0.1)`.
-///
-/// Empty structs are instantiated with just their name, and don't need anything else. `let thing =
-/// EmptyStruct;`
-///
-/// # Style conventions
-///
-/// Structs are always written in CamelCase, with few exceptions. While the trailing comma on a
-/// struct's list of fields can be omitted, it's usually kept for convenience in adding and
-/// removing fields down the line.
-///
-/// For more information on structs, take a look at the [Rust Book][book] or the
-/// [Reference][reference].
-///
-/// [`PhantomData`]: marker/struct.PhantomData.html
 /// [book]: https://doc.rust-lang.org/book/second-edition/ch05-01-defining-structs.html
-/// [reference]: https://doc.rust-lang.org/reference/items/structs.html
 mod struct_keyword { }

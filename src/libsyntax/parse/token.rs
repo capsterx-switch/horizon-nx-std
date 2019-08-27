@@ -79,14 +79,14 @@ pub enum Lit {
 }
 
 impl Lit {
-    crate fn literal_name(&self) -> &'static str {
+    crate fn short_name(&self) -> &'static str {
         match *self {
-            Byte(_) => "byte literal",
-            Char(_) => "char literal",
-            Integer(_) => "integer literal",
-            Float(_) => "float literal",
-            Str_(_) | StrRaw(..) => "string literal",
-            ByteStr(_) | ByteStrRaw(..) => "byte string literal"
+            Byte(_) => "byte",
+            Char(_) => "char",
+            Integer(_) => "integer",
+            Float(_) => "float",
+            Str_(_) | StrRaw(..) => "string",
+            ByteStr(_) | ByteStrRaw(..) => "byte string"
         }
     }
 
@@ -163,6 +163,7 @@ pub enum Token {
     DotDot,
     DotDotDot,
     DotDotEq,
+    DotEq, // HACK(durka42) never produced by the parser, only used for libproc_macro
     Comma,
     Semi,
     Colon,
@@ -206,10 +207,6 @@ pub enum Token {
 
     Eof,
 }
-
-// `Token` is used a lot. Make sure it doesn't unintentionally get bigger.
-#[cfg(target_arch = "x86_64")]
-static_assert!(MEM_SIZE_OF_STATEMENT: mem::size_of::<Token>() == 16);
 
 impl Token {
     pub fn interpolated(nt: Nonterminal) -> Token {
@@ -457,6 +454,7 @@ impl Token {
             Dot => match joint {
                 Dot => DotDot,
                 DotDot => DotDotDot,
+                DotEq => DotDotEq,
                 _ => return None,
             },
             DotDot => match joint {
@@ -479,7 +477,7 @@ impl Token {
                 _ => return None,
             },
 
-            Le | EqEq | Ne | Ge | AndAnd | OrOr | Tilde | BinOpEq(..) | At | DotDotDot |
+            Le | EqEq | Ne | Ge | AndAnd | OrOr | Tilde | BinOpEq(..) | At | DotDotDot | DotEq |
             DotDotEq | Comma | Semi | ModSep | RArrow | LArrow | FatArrow | Pound | Dollar |
             Question | OpenDelim(..) | CloseDelim(..) => return None,
 
@@ -549,12 +547,11 @@ impl Token {
         let tokens_for_real = nt.1.force(|| {
             // FIXME(#43081): Avoid this pretty-print + reparse hack
             let source = pprust::token_to_string(self);
-            let filename = FileName::macro_expansion_source_code(&source);
-            parse_stream_from_source_str(filename, source, sess, Some(span))
+            parse_stream_from_source_str(FileName::MacroExpansion, source, sess, Some(span))
         });
 
         // During early phases of the compiler the AST could get modified
-        // directly (e.g., attributes added or removed) and the internal cache
+        // directly (e.g. attributes added or removed) and the internal cache
         // of tokens my not be invalidated or updated. Consequently if the
         // "lossless" token stream disagrees with our actual stringification
         // (which has historically been much more battle-tested) then we go
@@ -573,9 +570,8 @@ impl Token {
         //
         // Instead the "probably equal" check here is "does each token
         // recursively have the same discriminant?" We basically don't look at
-        // the token values here and assume that such fine grained token stream
-        // modifications, including adding/removing typically non-semantic
-        // tokens such as extra braces and commas, don't happen.
+        // the token values here and assume that such fine grained modifications
+        // of token streams doesn't happen.
         if let Some(tokens) = tokens {
             if tokens.probably_equal_for_proc_macro(&tokens_for_real) {
                 return tokens
@@ -609,6 +605,7 @@ impl Token {
             (&DotDot, &DotDot) |
             (&DotDotDot, &DotDotDot) |
             (&DotDotEq, &DotDotEq) |
+            (&DotEq, &DotEq) |
             (&Comma, &Comma) |
             (&Semi, &Semi) |
             (&Colon, &Colon) |
@@ -786,12 +783,10 @@ fn prepend_attrs(sess: &ParseSess,
         assert_eq!(attr.style, ast::AttrStyle::Outer,
                    "inner attributes should prevent cached tokens from existing");
 
-        let source = pprust::attr_to_string(attr);
-        let macro_filename = FileName::macro_expansion_source_code(&source);
         if attr.is_sugared_doc {
             let stream = parse_stream_from_source_str(
-                macro_filename,
-                source,
+                FileName::MacroExpansion,
+                pprust::attr_to_string(attr),
                 sess,
                 Some(span),
             );
@@ -812,8 +807,8 @@ fn prepend_attrs(sess: &ParseSess,
         // should eventually be removed.
         } else {
             let stream = parse_stream_from_source_str(
-                macro_filename,
-                source,
+                FileName::MacroExpansion,
+                pprust::path_to_string(&attr.path),
                 sess,
                 Some(span),
             );
@@ -822,13 +817,16 @@ fn prepend_attrs(sess: &ParseSess,
 
         brackets.push(attr.tokens.clone());
 
+        let tokens = tokenstream::Delimited {
+            delim: DelimToken::Bracket,
+            tts: brackets.build().into(),
+        };
         // The span we list here for `#` and for `[ ... ]` are both wrong in
         // that it encompasses more than each token, but it hopefully is "good
         // enough" for now at least.
         builder.push(tokenstream::TokenTree::Token(attr.span, Pound));
         let delim_span = DelimSpan::from_single(attr.span);
-        builder.push(tokenstream::TokenTree::Delimited(
-            delim_span, DelimToken::Bracket, brackets.build().into()));
+        builder.push(tokenstream::TokenTree::Delimited(delim_span, tokens));
     }
     builder.push(tokens.clone());
     Some(builder.build())

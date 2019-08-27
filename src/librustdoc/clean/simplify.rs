@@ -12,7 +12,7 @@
 //! more canonical form.
 //!
 //! Currently all cross-crate-inlined function use `rustc::ty` to reconstruct
-//! the AST (e.g., see all of `clean::inline`), but this is not always a
+//! the AST (e.g. see all of `clean::inline`), but this is not always a
 //! non-lossy transformation. The current format of storage for where clauses
 //! for functions and such is simply a list of predicates. One example of this
 //! is that the AST predicate of: `where T: Trait<Foo=Bar>` is encoded as:
@@ -156,8 +156,8 @@ fn trait_is_same_or_supertrait(cx: &DocContext, child: DefId,
     if child == trait_ {
         return true
     }
-    let predicates = cx.tcx.super_predicates_of(child);
-    predicates.predicates.iter().filter_map(|(pred, _)| {
+    let predicates = cx.tcx.super_predicates_of(child).predicates;
+    predicates.iter().filter_map(|pred| {
         if let ty::Predicate::Trait(ref pred) = *pred {
             if pred.skip_binder().trait_ref.self_ty().is_self() {
                 Some(pred.def_id())

@@ -9,9 +9,15 @@
 // except according to those terms.
 
 use rustc::dep_graph::DepGraph;
-use rustc::hir;
+use rustc::hir::{self, map as hir_map};
 use rustc::hir::lowering::lower_crate;
-use rustc::hir::map as hir_map;
+use rustc_data_structures::fingerprint::Fingerprint;
+use rustc_data_structures::stable_hasher::StableHasher;
+use rustc_mir as mir;
+use rustc::session::{CompileResult, CrateDisambiguator, Session};
+use rustc::session::CompileIncomplete;
+use rustc::session::config::{self, Input, OutputFilenames, OutputType};
+use rustc::session::search_paths::PathKind;
 use rustc::lint;
 use rustc::middle::{self, reachable, resolve_lifetime, stability};
 use rustc::middle::privacy::AccessLevels;
@@ -19,27 +25,32 @@ use rustc::ty::{self, AllArenas, Resolutions, TyCtxt};
 use rustc::traits;
 use rustc::util::common::{install_panic_hook, time, ErrorReported};
 use rustc::util::profiling::ProfileCategory;
-use rustc::session::{CompileResult, CrateDisambiguator, Session};
-use rustc::session::CompileIncomplete;
-use rustc::session::config::{self, Input, OutputFilenames, OutputType};
-use rustc::session::search_paths::PathKind;
 use rustc_allocator as allocator;
 use rustc_borrowck as borrowck;
-use rustc_codegen_utils::codegen_backend::CodegenBackend;
-use rustc_data_structures::fingerprint::Fingerprint;
-use rustc_data_structures::stable_hasher::StableHasher;
-use rustc_data_structures::sync::{self, Lrc, Lock};
 use rustc_incremental;
+use rustc_resolve::{MakeGlobMap, Resolver, ResolverArenas};
 use rustc_metadata::creader::CrateLoader;
 use rustc_metadata::cstore::{self, CStore};
-use rustc_mir as mir;
-use rustc_passes::{self, ast_validation, hir_stats, loops, rvalue_promotion};
-use rustc_plugin as plugin;
-use rustc_plugin::registry::Registry;
-use rustc_privacy;
-use rustc_resolve::{MakeGlobMap, Resolver, ResolverArenas};
 use rustc_traits;
+use rustc_codegen_utils::codegen_backend::CodegenBackend;
 use rustc_typeck as typeck;
+use rustc_privacy;
+use rustc_plugin::registry::Registry;
+use rustc_plugin as plugin;
+use rustc_passes::{self, ast_validation, hir_stats, loops, rvalue_promotion};
+use super::Compilation;
+
+use serialize::json;
+
+use std::any::Any;
+use std::env;
+use std::ffi::{OsStr, OsString};
+use std::fs;
+use std::io::{self, Write};
+use std::iter;
+use std::path::{Path, PathBuf};
+use rustc_data_structures::sync::{self, Lrc, Lock};
+use std::sync::mpsc;
 use syntax::{self, ast, attr, diagnostics, visit};
 use syntax::early_buffered_lints::BufferedEarlyLint;
 use syntax::ext::base::ExtCtxt;
@@ -51,21 +62,10 @@ use syntax::symbol::Symbol;
 use syntax_pos::{FileName, hygiene};
 use syntax_ext;
 
-use serialize::json;
-
-use std::any::Any;
-use std::env;
-use std::ffi::OsString;
-use std::fs;
-use std::io::{self, Write};
-use std::iter;
-use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-
+use derive_registrar;
 use pretty::ReplaceBodyWithLoop;
-use proc_macro_decls;
+
 use profile;
-use super::Compilation;
 
 #[cfg(not(parallel_queries))]
 pub fn spawn_thread_pool<F: FnOnce(config::Options) -> R + sync::Send, R: sync::Send>(
@@ -91,7 +91,7 @@ pub fn spawn_thread_pool<F: FnOnce(config::Options) -> R + sync::Send, R: sync::
     let config = ThreadPoolBuilder::new()
         .num_threads(Session::query_threads_from_opts(&opts))
         .deadlock_handler(|| unsafe { ty::query::handle_deadlock() })
-        .stack_size(::STACK_SIZE);
+        .stack_size(16 * 1024 * 1024);
 
     let with_pool = move |pool: &ThreadPool| {
         pool.install(move || f(opts))
@@ -305,7 +305,7 @@ pub fn compile_input(
                             outdir,
                             output,
                             opt_crate,
-                            tcx.hir().krate(),
+                            tcx.hir.krate(),
                             &analysis,
                             tcx,
                             &crate_name,
@@ -356,10 +356,10 @@ pub fn compile_input(
 
     if sess.opts.debugging_opts.self_profile {
         sess.print_profiler_results();
-    }
 
-    if sess.opts.debugging_opts.profile_json {
-        sess.save_json_results();
+        if sess.opts.debugging_opts.profile_json {
+            sess.save_json_results();
+        }
     }
 
     controller_entry_point!(
@@ -790,9 +790,6 @@ where
                 trait_map: resolver.trait_map,
                 maybe_unused_trait_imports: resolver.maybe_unused_trait_imports,
                 maybe_unused_extern_crates: resolver.maybe_unused_extern_crates,
-                extern_prelude: resolver.extern_prelude.iter().map(|(ident, entry)| {
-                    (ident.name, entry.introduced_by_item)
-                }).collect(),
             },
 
             analysis: ty::CrateAnalysis {
@@ -884,7 +881,7 @@ where
         )
     });
 
-    let mut registry = registry.unwrap_or_else(|| Registry::new(sess, krate.span));
+    let mut registry = registry.unwrap_or(Registry::new(sess, krate.span));
 
     time(sess, "plugin registration", || {
         if sess.features_untracked().rustc_diagnostic_macros {
@@ -908,6 +905,7 @@ where
         }
     });
 
+    let whitelisted_legacy_custom_derives = registry.take_whitelisted_custom_derives();
     let Registry {
         syntax_exts,
         early_lint_passes,
@@ -954,6 +952,7 @@ where
         crate_loader,
         &resolver_arenas,
     );
+    resolver.whitelisted_legacy_custom_derives = whitelisted_legacy_custom_derives;
     syntax_ext::register_builtins(&mut resolver, syntax_exts, sess.features_untracked().quote);
 
     // Expand all macros
@@ -975,7 +974,7 @@ where
         let mut old_path = OsString::new();
         if cfg!(windows) {
             old_path = env::var_os("PATH").unwrap_or(old_path);
-            let mut new_path = sess.host_filesearch(PathKind::All).search_path_dirs();
+            let mut new_path = sess.host_filesearch(PathKind::All).get_dylib_search_paths();
             for path in env::split_paths(&old_path) {
                 if !new_path.contains(&path) {
                     new_path.push(path);
@@ -1022,7 +1021,6 @@ where
             .cloned()
             .collect();
         missing_fragment_specifiers.sort();
-
         for span in missing_fragment_specifiers {
             let lint = lint::builtin::MISSING_FRAGMENT_SPECIFIER;
             let msg = "missing fragment specifier";
@@ -1064,7 +1062,7 @@ where
             let num_crate_types = crate_types.len();
             let is_proc_macro_crate = crate_types.contains(&config::CrateType::ProcMacro);
             let is_test_crate = sess.opts.test;
-            syntax_ext::proc_macro_decls::modify(
+            syntax_ext::proc_macro_registrar::modify(
                 &sess.parse_sess,
                 &mut resolver,
                 krate,
@@ -1241,8 +1239,8 @@ where
         .set(time(sess, "looking for plugin registrar", || {
             plugin::build::find_plugin_registrar(sess.diagnostic(), &hir_map)
         }));
-    sess.proc_macro_decls_static
-        .set(proc_macro_decls::find(&hir_map));
+    sess.derive_registrar_fn
+        .set(derive_registrar::find(&hir_map));
 
     time(sess, "loop checking", || loops::check_crate(sess, &hir_map));
 
@@ -1474,7 +1472,7 @@ fn write_out_deps(sess: &Session, outputs: &OutputFilenames, out_filenames: &[Pa
             .collect();
         let mut file = fs::File::create(&deps_filename)?;
         for path in out_filenames {
-            writeln!(file, "{}: {}\n", path.display(), files.join(" "))?;
+            write!(file, "{}: {}\n\n", path.display(), files.join(" "))?;
         }
 
         // Emit a fake target for each input file to the compilation. This
@@ -1486,12 +1484,15 @@ fn write_out_deps(sess: &Session, outputs: &OutputFilenames, out_filenames: &[Pa
         Ok(())
     })();
 
-    if let Err(e) = result {
-        sess.fatal(&format!(
-            "error writing dependencies to `{}`: {}",
-            deps_filename.display(),
-            e
-        ));
+    match result {
+        Ok(()) => {}
+        Err(e) => {
+            sess.fatal(&format!(
+                "error writing dependencies to `{}`: {}",
+                deps_filename.display(),
+                e
+            ));
+        }
     }
 }
 
@@ -1519,7 +1520,6 @@ pub fn collect_crate_types(session: &Session, attrs: &[ast::Attribute]) -> Vec<c
                             Symbol::intern("proc-macro"),
                             Symbol::intern("bin")
                         ];
-
                         if let ast::MetaItemKind::NameValue(spanned) = a.meta().unwrap().node {
                             let span = spanned.span;
                             let lev_candidate = find_best_match_for_name(
@@ -1551,7 +1551,7 @@ pub fn collect_crate_types(session: &Session, attrs: &[ast::Attribute]) -> Vec<c
                         }
                         None
                     }
-                    None => {
+                    _ => {
                         session
                             .struct_span_err(a.span, "`crate_type` requires a value")
                             .note("for example: `#![crate_type=\"lib\"]`")
@@ -1581,26 +1581,25 @@ pub fn collect_crate_types(session: &Session, attrs: &[ast::Attribute]) -> Vec<c
             base.push(::rustc_codegen_utils::link::default_output_for_target(
                 session,
             ));
-        } else {
-            base.sort();
-            base.dedup();
         }
+        base.sort();
+        base.dedup();
     }
 
-    base.retain(|crate_type| {
-        let res = !::rustc_codegen_utils::link::invalid_output_for_target(session, *crate_type);
+    base.into_iter()
+        .filter(|crate_type| {
+            let res = !::rustc_codegen_utils::link::invalid_output_for_target(session, *crate_type);
 
-        if !res {
-            session.warn(&format!(
-                "dropping unsupported crate type `{}` for target `{}`",
-                *crate_type, session.opts.target_triple
-            ));
-        }
+            if !res {
+                session.warn(&format!(
+                    "dropping unsupported crate type `{}` for target `{}`",
+                    *crate_type, session.opts.target_triple
+                ));
+            }
 
-        res
-    });
-
-    base
+            res
+        })
+        .collect()
 }
 
 pub fn compute_crate_disambiguator(session: &Session) -> CrateDisambiguator {
@@ -1651,14 +1650,17 @@ pub fn build_output_filenames(
             // "-" as input file will cause the parser to read from stdin so we
             // have to make up a name
             // We want to toss everything after the final '.'
-            let dirpath = (*odir).as_ref().cloned().unwrap_or_default();
+            let dirpath = match *odir {
+                Some(ref d) => d.clone(),
+                None => PathBuf::new(),
+            };
 
             // If a crate name is present, we use it as the link name
             let stem = sess.opts
                 .crate_name
                 .clone()
                 .or_else(|| attr::find_crate_name(attrs).map(|n| n.to_string()))
-                .unwrap_or_else(|| input.filestem().to_owned());
+                .unwrap_or(input.filestem());
 
             OutputFilenames {
                 out_directory: dirpath,
@@ -1691,11 +1693,13 @@ pub fn build_output_filenames(
                 sess.warn("ignoring -C extra-filename flag due to -o flag");
             }
 
+            let cur_dir = Path::new("");
+
             OutputFilenames {
-                out_directory: out_file.parent().unwrap_or_else(|| Path::new("")).to_path_buf(),
+                out_directory: out_file.parent().unwrap_or(cur_dir).to_path_buf(),
                 out_filestem: out_file
                     .file_stem()
-                    .unwrap_or_default()
+                    .unwrap_or(OsStr::new(""))
                     .to_str()
                     .unwrap()
                     .to_string(),

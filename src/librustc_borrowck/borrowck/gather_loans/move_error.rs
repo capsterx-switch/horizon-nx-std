@@ -97,8 +97,8 @@ fn report_move_errors<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>, errors: &[MoveErr
             }
         }
         if let NoteClosureEnv(upvar_id) = error.move_from.note {
-            let var_node_id = bccx.tcx.hir().hir_to_node_id(upvar_id.var_path.hir_id);
-            err.span_label(bccx.tcx.hir().span(var_node_id),
+            let var_node_id = bccx.tcx.hir.hir_to_node_id(upvar_id.var_id);
+            err.span_label(bccx.tcx.hir.span(var_node_id),
                            "captured outer variable");
         }
         err.emit();
@@ -145,8 +145,6 @@ fn report_cannot_move_out_of<'a, 'tcx>(bccx: &'a BorrowckCtxt<'a, 'tcx>,
     match move_from.cat {
         Categorization::Deref(_, mc::BorrowedPtr(..)) |
         Categorization::Deref(_, mc::UnsafePtr(..)) |
-        Categorization::Deref(_, mc::Unique) |
-        Categorization::ThreadLocal(..) |
         Categorization::StaticItem => {
             bccx.cannot_move_out_of(
                 move_from.span, &move_from.descriptive_string(bccx.tcx), Origin::Ast)
@@ -168,10 +166,7 @@ fn report_cannot_move_out_of<'a, 'tcx>(bccx: &'a BorrowckCtxt<'a, 'tcx>,
                 }
             }
         }
-
-        Categorization::Rvalue(..) |
-        Categorization::Local(..) |
-        Categorization::Upvar(..) => {
+        _ => {
             span_bug!(move_from.span, "this path should not cause illegal move");
         }
     }

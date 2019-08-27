@@ -28,7 +28,7 @@ impl FlagComputation {
         }
     }
 
-    pub fn for_sty(st: &ty::TyKind<'_>) -> FlagComputation {
+    pub fn for_sty(st: &ty::TyKind) -> FlagComputation {
         let mut result = FlagComputation::new();
         result.add_sty(st);
         result
@@ -62,10 +62,12 @@ impl FlagComputation {
         let outer_exclusive_binder = computation.outer_exclusive_binder;
         if outer_exclusive_binder > ty::INNERMOST {
             self.add_exclusive_binder(outer_exclusive_binder.shifted_out(1));
-        } // otherwise, this binder captures nothing
+        } else {
+            // otherwise, this binder captures nothing
+        }
     }
 
-    fn add_sty(&mut self, st: &ty::TyKind<'_>) {
+    fn add_sty(&mut self, st: &ty::TyKind) {
         match st {
             &ty::Bool |
             &ty::Char |
@@ -115,21 +117,15 @@ impl FlagComputation {
                 self.add_substs(&substs.substs);
             }
 
-            &ty::Bound(debruijn, _) => {
-                self.add_binder(debruijn);
-            }
-
-            &ty::Placeholder(..) => {
-                self.add_flags(TypeFlags::HAS_TY_PLACEHOLDER);
-            }
-
             &ty::Infer(infer) => {
                 self.add_flags(TypeFlags::HAS_FREE_LOCAL_NAMES); // it might, right?
                 self.add_flags(TypeFlags::HAS_TY_INFER);
                 match infer {
                     ty::FreshTy(_) |
                     ty::FreshIntTy(_) |
-                    ty::FreshFloatTy(_) => {
+                    ty::FreshFloatTy(_) |
+                    ty::CanonicalTy(_) => {
+                        self.add_flags(TypeFlags::HAS_CANONICAL_VARS);
                     }
 
                     ty::TyVar(_) |
@@ -147,17 +143,12 @@ impl FlagComputation {
             &ty::Projection(ref data) => {
                 // currently we can't normalize projections that
                 // include bound regions, so track those separately.
-                if !data.has_escaping_bound_vars() {
+                if !data.has_escaping_regions() {
                     self.add_flags(TypeFlags::HAS_NORMALIZABLE_PROJECTION);
                 }
                 self.add_flags(TypeFlags::HAS_PROJECTION);
                 self.add_projection_ty(data);
             }
-
-            &ty::UnnormalizedProjection(ref data) => {
-                self.add_flags(TypeFlags::HAS_PROJECTION);
-                self.add_projection_ty(data);
-            },
 
             &ty::Opaque(_, substs) => {
                 self.add_flags(TypeFlags::HAS_PROJECTION);
@@ -213,18 +204,18 @@ impl FlagComputation {
         }
     }
 
-    fn add_ty(&mut self, ty: Ty<'_>) {
+    fn add_ty(&mut self, ty: Ty) {
         self.add_flags(ty.flags);
         self.add_exclusive_binder(ty.outer_exclusive_binder);
     }
 
-    fn add_tys(&mut self, tys: &[Ty<'_>]) {
+    fn add_tys(&mut self, tys: &[Ty]) {
         for &ty in tys {
             self.add_ty(ty);
         }
     }
 
-    fn add_fn_sig(&mut self, fn_sig: ty::PolyFnSig<'_>) {
+    fn add_fn_sig(&mut self, fn_sig: ty::PolyFnSig) {
         let mut computation = FlagComputation::new();
 
         computation.add_tys(fn_sig.skip_binder().inputs());
@@ -233,14 +224,14 @@ impl FlagComputation {
         self.add_bound_computation(&computation);
     }
 
-    fn add_region(&mut self, r: ty::Region<'_>) {
+    fn add_region(&mut self, r: ty::Region) {
         self.add_flags(r.type_flags());
         if let ty::ReLateBound(debruijn, _) = *r {
             self.add_binder(debruijn);
         }
     }
 
-    fn add_const(&mut self, constant: &ty::Const<'_>) {
+    fn add_const(&mut self, constant: &ty::Const) {
         self.add_ty(constant.ty);
         if let ConstValue::Unevaluated(_, substs) = constant.val {
             self.add_flags(TypeFlags::HAS_PROJECTION);
@@ -248,16 +239,16 @@ impl FlagComputation {
         }
     }
 
-    fn add_existential_projection(&mut self, projection: &ty::ExistentialProjection<'_>) {
+    fn add_existential_projection(&mut self, projection: &ty::ExistentialProjection) {
         self.add_substs(projection.substs);
         self.add_ty(projection.ty);
     }
 
-    fn add_projection_ty(&mut self, projection_ty: &ty::ProjectionTy<'_>) {
+    fn add_projection_ty(&mut self, projection_ty: &ty::ProjectionTy) {
         self.add_substs(projection_ty.substs);
     }
 
-    fn add_substs(&mut self, substs: &Substs<'_>) {
+    fn add_substs(&mut self, substs: &Substs) {
         for ty in substs.types() {
             self.add_ty(ty);
         }

@@ -101,11 +101,11 @@ impl DepGraph {
         DepGraph {
             data: Some(Lrc::new(DepGraphData {
                 previous_work_products: prev_work_products,
-                dep_node_debug: Default::default(),
+                dep_node_debug: Lock::new(FxHashMap()),
                 current: Lock::new(CurrentDepGraph::new()),
                 previous: prev_graph,
                 colors: Lock::new(DepNodeColorMap::new(prev_graph_node_count)),
-                loaded_from_cache: Default::default(),
+                loaded_from_cache: Lock::new(FxHashMap()),
             })),
             fingerprints: Lrc::new(Lock::new(fingerprints)),
         }
@@ -195,7 +195,7 @@ impl DepGraph {
     /// - If you need 3+ arguments, use a tuple for the
     ///   `arg` parameter.
     ///
-    /// [rustc guide]: https://rust-lang.github.io/rustc-guide/incremental-compilation.html
+    /// [rustc guide]: https://rust-lang-nursery.github.io/rustc-guide/incremental-compilation.html
     pub fn with_task<'gcx, C, A, R>(&self,
                                    key: DepNode,
                                    cx: C,
@@ -209,7 +209,7 @@ impl DepGraph {
             |key| OpenTask::Regular(Lock::new(RegularOpenTask {
                 node: key,
                 reads: SmallVec::new(),
-                read_set: Default::default(),
+                read_set: FxHashSet(),
             })),
             |data, key, task| data.borrow_mut().complete_task(key, task))
     }
@@ -353,7 +353,7 @@ impl DepGraph {
             let (result, open_task) = ty::tls::with_context(|icx| {
                 let task = OpenTask::Anon(Lock::new(AnonOpenTask {
                     reads: SmallVec::new(),
-                    read_set: Default::default(),
+                    read_set: FxHashSet(),
                 }));
 
                 let r = {
@@ -937,7 +937,7 @@ impl CurrentDepGraph {
         CurrentDepGraph {
             nodes: IndexVec::new(),
             edges: IndexVec::new(),
-            node_to_node_index: Default::default(),
+            node_to_node_index: FxHashMap(),
             anon_id_seed: stable_hasher.finish(),
             forbidden_edge,
             total_read_count: 0,

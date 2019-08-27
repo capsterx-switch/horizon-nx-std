@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! A module for working with processes.
 //!
 //! This module is mostly concerned with spawning and interacting with child
@@ -1019,28 +1009,6 @@ impl fmt::Debug for Stdio {
 
 #[stable(feature = "stdio_from", since = "1.20.0")]
 impl From<ChildStdin> for Stdio {
-    /// Converts a `ChildStdin` into a `Stdio`
-    ///
-    /// # Examples
-    ///
-    /// `ChildStdin` will be converted to `Stdio` using `Stdio::from` under the hood.
-    ///
-    /// ```rust
-    /// use std::process::{Command, Stdio};
-    ///
-    /// let reverse = Command::new("rev")
-    ///     .stdin(Stdio::piped())
-    ///     .spawn()
-    ///     .expect("failed reverse command");
-    ///
-    /// let _echo = Command::new("echo")
-    ///     .arg("Hello, world!")
-    ///     .stdout(reverse.stdin.unwrap()) // Converted into a Stdio here
-    ///     .output()
-    ///     .expect("failed echo command");
-    ///
-    /// // "!dlrow ,olleH" echoed to console
-    /// ```
     fn from(child: ChildStdin) -> Stdio {
         Stdio::from_inner(child.into_inner().into())
     }
@@ -1048,28 +1016,6 @@ impl From<ChildStdin> for Stdio {
 
 #[stable(feature = "stdio_from", since = "1.20.0")]
 impl From<ChildStdout> for Stdio {
-    /// Converts a `ChildStdout` into a `Stdio`
-    ///
-    /// # Examples
-    ///
-    /// `ChildStdout` will be converted to `Stdio` using `Stdio::from` under the hood.
-    ///
-    /// ```rust
-    /// use std::process::{Command, Stdio};
-    ///
-    /// let hello = Command::new("echo")
-    ///     .arg("Hello, world!")
-    ///     .stdout(Stdio::piped())
-    ///     .spawn()
-    ///     .expect("failed echo command");
-    ///
-    /// let reverse = Command::new("rev")
-    ///     .stdin(hello.stdout.unwrap())  // Converted into a Stdio here
-    ///     .output()
-    ///     .expect("failed reverse command");
-    ///
-    /// assert_eq!(reverse.stdout, b"!dlrow ,olleH\n");
-    /// ```
     fn from(child: ChildStdout) -> Stdio {
         Stdio::from_inner(child.into_inner().into())
     }
@@ -1077,30 +1023,6 @@ impl From<ChildStdout> for Stdio {
 
 #[stable(feature = "stdio_from", since = "1.20.0")]
 impl From<ChildStderr> for Stdio {
-    /// Converts a `ChildStderr` into a `Stdio`
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use std::process::{Command, Stdio};
-    ///
-    /// let reverse = Command::new("rev")
-    ///     .arg("non_existing_file.txt")
-    ///     .stderr(Stdio::piped())
-    ///     .spawn()
-    ///     .expect("failed reverse command");
-    ///
-    /// let cat = Command::new("cat")
-    ///     .arg("-")
-    ///     .stdin(reverse.stderr.unwrap()) // Converted into a Stdio here
-    ///     .output()
-    ///     .expect("failed echo command");
-    ///
-    /// assert_eq!(
-    ///     String::from_utf8_lossy(&cat.stdout),
-    ///     "rev: cannot open non_existing_file.txt: No such file or directory\n"
-    /// );
-    /// ```
     fn from(child: ChildStderr) -> Stdio {
         Stdio::from_inner(child.into_inner().into())
     }
@@ -1108,26 +1030,6 @@ impl From<ChildStderr> for Stdio {
 
 #[stable(feature = "stdio_from", since = "1.20.0")]
 impl From<fs::File> for Stdio {
-    /// Converts a `File` into a `Stdio`
-    ///
-    /// # Examples
-    ///
-    /// `File` will be converted to `Stdio` using `Stdio::from` under the hood.
-    ///
-    /// ```rust,no_run
-    /// use std::fs::File;
-    /// use std::process::Command;
-    ///
-    /// // With the `foo.txt` file containing `Hello, world!"
-    /// let file = File::open("foo.txt").unwrap();
-    ///
-    /// let reverse = Command::new("rev")
-    ///     .stdin(file)  // Implicit File conversion into a Stdio
-    ///     .output()
-    ///     .expect("failed reverse command");
-    ///
-    /// assert_eq!(reverse.stdout, b"!dlrow ,olleH");
-    /// ```
     fn from(file: fs::File) -> Stdio {
         Stdio::from_inner(file.into_inner().into())
     }
@@ -1233,7 +1135,7 @@ impl fmt::Display for ExitStatus {
 /// [RFC #1937]: https://github.com/rust-lang/rfcs/pull/1937
 #[derive(Clone, Copy, Debug)]
 #[unstable(feature = "process_exitcode_placeholder", issue = "48711")]
-pub struct ExitCode(imp::ExitCode);
+pub struct ExitCode(pub u8);
 
 #[unstable(feature = "process_exitcode_placeholder", issue = "48711")]
 impl ExitCode {
@@ -1243,7 +1145,7 @@ impl ExitCode {
     /// termination, so there's no need to return this from `main` unless
     /// you're also returning other possible codes.
     #[unstable(feature = "process_exitcode_placeholder", issue = "48711")]
-    pub const SUCCESS: ExitCode = ExitCode(imp::ExitCode::SUCCESS);
+    pub const SUCCESS: ExitCode = ExitCode(0 as _);
 
     /// The canonical ExitCode for unsuccessful termination on this platform.
     ///
@@ -1251,7 +1153,7 @@ impl ExitCode {
     /// instead returning `Err(_)` and `Ok(())` respectively, which will
     /// return the same codes (but will also `eprintln!` the error).
     #[unstable(feature = "process_exitcode_placeholder", issue = "48711")]
-    pub const FAILURE: ExitCode = ExitCode(imp::ExitCode::FAILURE);
+    pub const FAILURE: ExitCode = ExitCode(-1 as _);
 }
 
 impl Child {
@@ -1340,7 +1242,7 @@ impl Child {
     /// Attempts to collect the exit status of the child if it has already
     /// exited.
     ///
-    /// This function will not block the calling thread and will only
+    /// This function will not block the calling thread and will only advisorily
     /// check to see if the child process has exited or not. If the child has
     /// exited then on Unix the process id is reaped. This function is
     /// guaranteed to repeatedly return a successful exit status so long as the
@@ -1627,7 +1529,7 @@ impl<E: fmt::Debug> Termination for Result<!, E> {
 impl Termination for ExitCode {
     #[inline]
     fn report(self) -> i32 {
-        self.0.as_i32()
+        self.0 as i32
     }
 }
 

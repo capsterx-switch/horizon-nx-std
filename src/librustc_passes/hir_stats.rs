@@ -41,8 +41,8 @@ struct StatCollector<'k> {
 pub fn print_hir_stats(krate: &hir::Crate) {
     let mut collector = StatCollector {
         krate: Some(krate),
-        data: FxHashMap::default(),
-        seen: FxHashSet::default(),
+        data: FxHashMap(),
+        seen: FxHashSet(),
     };
     hir_visit::walk_crate(&mut collector, krate);
     collector.print("HIR STATS");
@@ -51,8 +51,8 @@ pub fn print_hir_stats(krate: &hir::Crate) {
 pub fn print_ast_stats<'v>(krate: &'v ast::Crate, title: &str) {
     let mut collector = StatCollector {
         krate: None,
-        data: FxHashMap::default(),
-        seen: FxHashSet::default(),
+        data: FxHashMap(),
+        seen: FxHashSet(),
     };
     ast_visit::walk_crate(&mut collector, krate);
     collector.print(title);

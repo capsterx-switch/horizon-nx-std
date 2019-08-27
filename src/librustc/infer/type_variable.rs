@@ -72,7 +72,7 @@ pub type TypeVariableMap = FxHashMap<ty::TyVid, TypeVariableOrigin>;
 
 struct TypeVariableData {
     origin: TypeVariableOrigin,
-    diverging: bool,
+    diverging: bool
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -169,13 +169,13 @@ impl<'tcx> TypeVariableTable<'tcx> {
         // Hack: we only need this so that `types_escaping_snapshot`
         // can see what has been unified; see the Delegate impl for
         // more details.
-        self.values.record(Instantiate { vid });
+        self.values.record(Instantiate { vid: vid });
     }
 
     /// Creates a new type variable.
     ///
     /// - `diverging`: indicates if this is a "diverging" type
-    ///   variable, e.g.,  one created as the type of a `return`
+    ///   variable, e.g.  one created as the type of a `return`
     ///   expression. The code in this module doesn't care if a
     ///   variable is diverging, but the main Rust type-checker will
     ///   sometimes "unify" such variables with the `!` or `()` types.
@@ -273,8 +273,11 @@ impl<'tcx> TypeVariableTable<'tcx> {
     pub fn rollback_to(&mut self, s: Snapshot<'tcx>) {
         debug!("rollback_to{:?}", {
             for action in self.values.actions_since_snapshot(&s.snapshot) {
-                if let sv::UndoLog::NewElem(index) = *action {
-                    debug!("inference variable _#{}t popped", index)
+                match *action {
+                    sv::UndoLog::NewElem(index) => {
+                        debug!("inference variable _#{}t popped", index)
+                    }
+                    _ => { }
                 }
             }
         });
@@ -320,7 +323,7 @@ impl<'tcx> TypeVariableTable<'tcx> {
     /// but which have only been unified since `s` started, and
     /// return the types with which they were unified. So if we had
     /// a type variable `V0`, then we started the snapshot, then we
-    /// created a type variable `V1`, unified `V0` with `T0`, and
+    /// created a type variable `V1`, unifed `V0` with `T0`, and
     /// unified `V1` with `T1`, this function would return `{T0}`.
     pub fn types_escaping_snapshot(&mut self, s: &Snapshot<'tcx>) -> Vec<Ty<'tcx>> {
         let mut new_elem_threshold = u32::MAX;

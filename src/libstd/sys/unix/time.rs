@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use cmp::Ordering;
 use libc;
 use time::Duration;
@@ -24,6 +14,12 @@ struct Timespec {
 }
 
 impl Timespec {
+    const fn zero() -> Timespec {
+        Timespec {
+            t: libc::timespec { tv_sec: 0, tv_nsec: 0 },
+        }
+    }
+
     fn sub_timespec(&self, other: &Timespec) -> Result<Duration, Duration> {
         if self >= other {
             Ok(if self.t.tv_nsec >= other.t.tv_nsec {
@@ -40,6 +36,10 @@ impl Timespec {
                 Err(d) => Ok(d),
             }
         }
+    }
+
+    fn add_duration(&self, other: &Duration) -> Timespec {
+        self.checked_add_duration(other).expect("overflow when adding duration to time")
     }
 
     fn checked_add_duration(&self, other: &Duration) -> Option<Timespec> {
@@ -138,17 +138,20 @@ mod inner {
     }
 
     pub const UNIX_EPOCH: SystemTime = SystemTime {
-        t: Timespec {
-            t: libc::timespec {
-                tv_sec: 0,
-                tv_nsec: 0,
-            },
-        },
+        t: Timespec::zero(),
     };
 
     impl Instant {
         pub fn now() -> Instant {
             Instant { t: unsafe { libc::mach_absolute_time() } }
+        }
+
+        pub const fn zero() -> Instant {
+            Instant { t: 0 }
+        }
+
+        pub fn actually_monotonic() -> bool {
+            true
         }
 
         pub fn sub_instant(&self, other: &Instant) -> Duration {
@@ -191,6 +194,10 @@ mod inner {
             self.t.sub_timespec(&other.t)
         }
 
+        pub fn add_duration(&self, other: &Duration) -> SystemTime {
+            SystemTime { t: self.t.add_duration(other) }
+        }
+
         pub fn checked_add_duration(&self, other: &Duration) -> Option<SystemTime> {
             Some(SystemTime { t: self.t.checked_add_duration(other)? })
         }
@@ -211,7 +218,7 @@ mod inner {
 
     impl From<libc::timespec> for SystemTime {
         fn from(t: libc::timespec) -> SystemTime {
-            SystemTime { t: Timespec { t } }
+            SystemTime { t: Timespec { t: t } }
         }
     }
 
@@ -229,7 +236,10 @@ mod inner {
             .checked_mul(NSEC_PER_SEC)?
             .checked_add(dur.subsec_nanos() as u64)?;
         let info = info();
-        Some(mul_div_u64(nanos, info.denom as u64, info.numer as u64))
+        let nanos = dur.as_secs().checked_mul(NSEC_PER_SEC).and_then(|nanos| {
+            nanos.checked_add(dur.subsec_nanos() as u64)
+        }).expect("overflow converting duration to nanoseconds");
+        mul_div_u64(nanos, info.denom as u64, info.numer as u64)
     }
 
     fn info() -> &'static libc::mach_timebase_info {
@@ -268,17 +278,24 @@ mod inner {
     }
 
     pub const UNIX_EPOCH: SystemTime = SystemTime {
-        t: Timespec {
-            t: libc::timespec {
-                tv_sec: 0,
-                tv_nsec: 0,
-            },
-        },
+        t: Timespec::zero(),
     };
 
     impl Instant {
         pub fn now() -> Instant {
             Instant { t: now(libc::CLOCK_MONOTONIC) }
+        }
+
+        pub const fn zero() -> Instant {
+            Instant {
+                t: Timespec::zero(),
+            }
+        }
+
+        pub fn actually_monotonic() -> bool {
+            (cfg!(target_os = "linux") && cfg!(target_arch = "x86_64")) ||
+            (cfg!(target_os = "linux") && cfg!(target_arch = "x86")) ||
+            false // last clause, used so `||` is always trailing above
         }
 
         pub fn sub_instant(&self, other: &Instant) -> Duration {
@@ -315,6 +332,10 @@ mod inner {
             self.t.sub_timespec(&other.t)
         }
 
+        pub fn add_duration(&self, other: &Duration) -> SystemTime {
+            SystemTime { t: self.t.add_duration(other) }
+        }
+
         pub fn checked_add_duration(&self, other: &Duration) -> Option<SystemTime> {
             Some(SystemTime { t: self.t.checked_add_duration(other)? })
         }
@@ -326,7 +347,7 @@ mod inner {
 
     impl From<libc::timespec> for SystemTime {
         fn from(t: libc::timespec) -> SystemTime {
-            SystemTime { t: Timespec { t } }
+            SystemTime { t: Timespec { t: t } }
         }
     }
 

@@ -3,37 +3,27 @@
 //! It is sometimes useful to have objects that are guaranteed to not move,
 //! in the sense that their placement in memory does not change, and can thus be relied upon.
 //!
-//! A prime example of such a scenario would be building self-referential structs,
+//! A prime example of such a scenario would be building self-referencial structs,
 //! since moving an object with pointers to itself will invalidate them,
 //! which could cause undefined behavior.
 //!
-//! By default, all types in Rust are movable. Rust allows passing all types by-value,
-//! and common smart-pointer types such as `Box`, `Rc`, and `&mut` allow replacing and
-//! moving the values they contain. In order to prevent objects from moving, they must
-//! be pinned by wrapping a pointer to the data in the [`Pin`] type.
-//! Doing this prohibits moving the value behind the pointer.
-//! For example, `Pin<Box<T>>` functions much like a regular `Box<T>`,
-//! but doesn't allow moving `T`. The pointer value itself (the `Box`) can still be moved,
-//! but the value behind it cannot.
+//! In order to prevent objects from moving, they must be pinned
+//! by wrapping a pointer to the data in the [`Pin`] type. A pointer wrapped
+//! in a `Pin` is otherwise equivalent to its normal version, e.g. `Pin<Box<T>>`
+//! and `Box<T>` work the same way except that the first is pinning the value
+//! of `T` in place.
 //!
-//! Since data can be moved out of `&mut` and `Box` with functions such as [`swap`],
-//! changing the location of the underlying data, [`Pin`] prohibits accessing the
-//! underlying pointer type (the `&mut` or `Box`) directly, and provides its own set of
-//! APIs for accessing and using the value. [`Pin`] also guarantees that no other
-//! functions will move the pointed-to value. This allows for the creation of
-//! self-references and other special behaviors that are only possible for unmovable
-//! values.
+//! First of all, these are pointer types because pinned data mustn't be passed around by value
+//! (that would change its location in memory).
+//! Secondly, since data can be moved out of `&mut` and `Box` with functions such as [`swap`],
+//! which causes their contents to swap places in memory,
+//! we need dedicated types that prohibit such operations.
 //!
-//! However, these restrictions are usually not necessary. Many types are always freely
-//! movable. These types implement the [`Unpin`] auto-trait, which nullifies the affect
-//! of [`Pin`]. For `T: Unpin`, `Pin<Box<T>>` and `Box<T>` function identically, as do
-//! `Pin<&mut T>` and `&mut T`.
-//!
-//! Note that pinning and `Unpin` only affect the pointed-to type. For example, whether
-//! or not `Box<T>` is `Unpin` has no affect on the behavior of `Pin<Box<T>>`. Similarly,
-//! `Pin<Box<T>>` and `Pin<&mut T>` are always `Unpin` themselves, even though the
-//! `T` underneath them isn't, because the pointers in `Pin<Box<_>>` and `Pin<&mut _>`
-//! are always freely movable, even if the data they point to isn't.
+//! However, these restrictions are usually not necessary,
+//! so most types implement the [`Unpin`] auto-trait,
+//! which indicates that the type can be moved out safely.
+//! Doing so removes the limitations of pinning types,
+//! making them the same as their non-pinning counterparts.
 //!
 //! [`Pin`]: struct.Pin.html
 //! [`Unpin`]: trait.Unpin.html
@@ -46,10 +36,10 @@
 //! #![feature(pin)]
 //!
 //! use std::pin::Pin;
-//! use std::marker::PhantomPinned;
+//! use std::marker::Pinned;
 //! use std::ptr::NonNull;
 //!
-//! // This is a self-referential struct since the slice field points to the data field.
+//! // This is a self referencial struct since the slice field points to the data field.
 //! // We cannot inform the compiler about that with a normal reference,
 //! // since this pattern cannot be described with the usual borrowing rules.
 //! // Instead we use a raw pointer, though one which is known to not be null,
@@ -57,7 +47,7 @@
 //! struct Unmovable {
 //!     data: String,
 //!     slice: NonNull<String>,
-//!     _pin: PhantomPinned,
+//!     _pin: Pinned,
 //! }
 //!
 //! impl Unmovable {
@@ -70,7 +60,7 @@
 //!             // we only create the pointer once the data is in place
 //!             // otherwise it will have already moved before we even started
 //!             slice: NonNull::dangling(),
-//!             _pin: PhantomPinned,
+//!             _pin: Pinned,
 //!         };
 //!         let mut boxed = Box::pinned(res);
 //!
@@ -101,7 +91,7 @@
 
 use fmt;
 use marker::Sized;
-use ops::{Deref, DerefMut, CoerceUnsized, DispatchFromDyn};
+use ops::{Deref, DerefMut, CoerceUnsized};
 
 #[doc(inline)]
 pub use marker::Unpin;
@@ -112,7 +102,7 @@ pub use marker::Unpin;
 /// value in place, preventing the value referenced by that pointer from being moved
 /// unless it implements [`Unpin`].
 ///
-/// See the [`pin` module] documentation for further explanation on pinning.
+/// See the [`pin` module] documentation for furthur explanation on pinning.
 ///
 /// [`Unpin`]: ../../std/marker/trait.Unpin.html
 /// [`pin` module]: ../../std/pin/index.html
@@ -303,21 +293,21 @@ where
 }
 
 #[unstable(feature = "pin", issue = "49150")]
-impl<P: fmt::Debug> fmt::Debug for Pin<P> {
+impl<'a, P: fmt::Debug> fmt::Debug for Pin<P> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&self.pointer, f)
     }
 }
 
 #[unstable(feature = "pin", issue = "49150")]
-impl<P: fmt::Display> fmt::Display for Pin<P> {
+impl<'a, P: fmt::Display> fmt::Display for Pin<P> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&self.pointer, f)
     }
 }
 
 #[unstable(feature = "pin", issue = "49150")]
-impl<P: fmt::Pointer> fmt::Pointer for Pin<P> {
+impl<'a, P: fmt::Pointer> fmt::Pointer for Pin<P> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Pointer::fmt(&self.pointer, f)
     }
@@ -329,16 +319,10 @@ impl<P: fmt::Pointer> fmt::Pointer for Pin<P> {
 // for other reasons, though, so we just need to take care not to allow such
 // impls to land in std.
 #[unstable(feature = "pin", issue = "49150")]
-impl<P, U> CoerceUnsized<Pin<U>> for Pin<P>
+impl<'a, P, U> CoerceUnsized<Pin<U>> for Pin<P>
 where
     P: CoerceUnsized<U>,
 {}
 
 #[unstable(feature = "pin", issue = "49150")]
-impl<'a, P, U> DispatchFromDyn<Pin<U>> for Pin<P>
-where
-    P: DispatchFromDyn<U>,
-{}
-
-#[unstable(feature = "pin", issue = "49150")]
-impl<P> Unpin for Pin<P> {}
+impl<'a, P> Unpin for Pin<P> {}

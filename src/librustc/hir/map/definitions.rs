@@ -36,7 +36,6 @@ use util::nodemap::NodeMap;
 /// Internally the DefPathTable holds a tree of DefKeys, where each DefKey
 /// stores the DefIndex of its parent.
 /// There is one DefPathTable for each crate.
-#[derive(Default)]
 pub struct DefPathTable {
     index_to_key: [Vec<DefKey>; 2],
     def_path_hashes: [Vec<DefPathHash>; 2],
@@ -150,10 +149,11 @@ impl Decodable for DefPathTable {
     }
 }
 
+
 /// The definition table containing node definitions.
-/// It holds the `DefPathTable` for local `DefId`s/`DefPath`s and it also stores a
-/// mapping from `NodeId`s to local `DefId`s.
-#[derive(Clone, Default)]
+/// It holds the DefPathTable for local DefIds/DefPaths and it also stores a
+/// mapping from NodeIds to local DefIds.
+#[derive(Clone)]
 pub struct Definitions {
     table: DefPathTable,
     node_to_def_index: NodeMap<DefIndex>,
@@ -287,31 +287,6 @@ impl DefPath {
         s
     }
 
-    /// Return filename friendly string of the DefPah with the
-    /// crate-prefix.
-    pub fn to_string_friendly<F>(&self, crate_imported_name: F) -> String
-        where F: FnOnce(CrateNum) -> Symbol
-    {
-        let crate_name_str = crate_imported_name(self.krate).as_str();
-        let mut s = String::with_capacity(crate_name_str.len() + self.data.len() * 16);
-
-        write!(s, "::{}", crate_name_str).unwrap();
-
-        for component in &self.data {
-            if component.disambiguator == 0 {
-                write!(s, "::{}", component.data.as_interned_str()).unwrap();
-            } else {
-                write!(s,
-                       "{}[{}]",
-                       component.data.as_interned_str(),
-                       component.disambiguator)
-                    .unwrap();
-            }
-        }
-
-        s
-    }
-
     /// Return filename friendly string of the DefPah without
     /// the crate-prefix. This method is useful if you don't have
     /// a TyCtxt available.
@@ -412,8 +387,20 @@ impl Definitions {
     ///     ascending order.
     ///
     /// FIXME: there is probably a better place to put this comment.
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new() -> Definitions {
+        Definitions {
+            table: DefPathTable {
+                index_to_key: [vec![], vec![]],
+                def_path_hashes: [vec![], vec![]],
+            },
+            node_to_def_index: NodeMap(),
+            def_index_to_node: [vec![], vec![]],
+            node_to_hir_id: IndexVec::new(),
+            parent_modules_of_macro_defs: FxHashMap(),
+            expansions_that_defined: FxHashMap(),
+            next_disambiguator: FxHashMap(),
+            def_index_to_span: FxHashMap(),
+        }
     }
 
     pub fn def_path_table(&self) -> &DefPathTable {

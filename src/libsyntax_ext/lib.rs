@@ -14,12 +14,9 @@
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/")]
 
-#![feature(in_band_lifetimes)]
-#![feature(proc_macro_diagnostic)]
 #![feature(proc_macro_internals)]
-#![feature(proc_macro_span)]
 #![feature(decl_macro)]
-#![feature(nll)]
+#![cfg_attr(not(stage0), feature(nll))]
 #![feature(str_escape)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
@@ -39,6 +36,10 @@ extern crate log;
 
 mod diagnostics;
 
+#[macro_use]
+// for custom_derive
+pub mod deriving;
+
 mod asm;
 mod assert;
 mod cfg;
@@ -50,13 +51,13 @@ mod format;
 mod format_foreign;
 mod global_asm;
 mod log_syntax;
-mod proc_macro_server;
+mod trace_macros;
 mod test;
 mod test_case;
-mod trace_macros;
 
-pub mod deriving;
-pub mod proc_macro_decls;
+pub mod proc_macro_registrar;
+
+
 pub mod proc_macro_impl;
 
 use rustc_data_structures::sync::Lrc;

@@ -16,7 +16,7 @@
 #![allow(unused_attributes)]
 #![feature(range_contains)]
 #![cfg_attr(unix, feature(libc))]
-#![feature(nll)]
+#![cfg_attr(not(stage0), feature(nll))]
 #![feature(optin_builtin_traits)]
 
 extern crate atty;
@@ -129,8 +129,8 @@ pub trait SourceMapper {
     fn span_to_filename(&self, sp: Span) -> FileName;
     fn merge_spans(&self, sp_lhs: Span, sp_rhs: Span) -> Option<Span>;
     fn call_span_if_macro(&self, sp: Span) -> Span;
-    fn ensure_source_file_source_present(&self, source_file: Lrc<SourceFile>) -> bool;
-    fn doctest_offset_line(&self, file: &FileName, line: usize) -> usize;
+    fn ensure_source_file_source_present(&self, file_map: Lrc<SourceFile>) -> bool;
+    fn doctest_offset_line(&self, line: usize) -> usize;
 }
 
 impl CodeSuggestion {
@@ -382,9 +382,9 @@ impl Handler {
             emitter: Lock::new(e),
             continue_after_error: LockCell::new(true),
             delayed_span_bugs: Lock::new(Vec::new()),
-            taught_diagnostics: Default::default(),
-            emitted_diagnostic_codes: Default::default(),
-            emitted_diagnostics: Default::default(),
+            taught_diagnostics: Lock::new(FxHashSet()),
+            emitted_diagnostic_codes: Lock::new(FxHashSet()),
+            emitted_diagnostics: Lock::new(FxHashSet()),
         }
     }
 
@@ -398,8 +398,7 @@ impl Handler {
     /// tools that want to reuse a `Parser` cleaning the previously emitted diagnostics as well as
     /// the overall count of emitted error diagnostics.
     pub fn reset_err_count(&self) {
-        // actually frees the underlying memory (which `clear` would not do)
-        *self.emitted_diagnostics.borrow_mut() = Default::default();
+        *self.emitted_diagnostics.borrow_mut() = FxHashSet();
         self.err_count.store(0, SeqCst);
     }
 

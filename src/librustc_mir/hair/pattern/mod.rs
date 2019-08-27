@@ -18,15 +18,10 @@ pub(crate) use self::check_match::check_match;
 
 use const_eval::{const_field, const_variant_index};
 
-use hair::util::UserAnnotatedTyHelpers;
-use hair::constant::*;
-
 use rustc::mir::{fmt_const_val, Field, BorrowKind, Mutability};
-use rustc::mir::{ProjectionElem, UserTypeAnnotation, UserTypeProjection, UserTypeProjections};
 use rustc::mir::interpret::{Scalar, GlobalId, ConstValue, sign_extend};
-use rustc::ty::{self, Region, TyCtxt, AdtDef, Ty};
+use rustc::ty::{self, CanonicalTy, TyCtxt, AdtDef, Ty, Region};
 use rustc::ty::subst::{Substs, Kind};
-use rustc::ty::layout::VariantIdx;
 use rustc::hir::{self, PatKind, RangeEnd};
 use rustc::hir::def::{Def, CtorKind};
 use rustc::hir::pat_util::EnumerateAndAdjustIterator;
@@ -38,6 +33,7 @@ use std::fmt;
 use syntax::ast;
 use syntax::ptr::P;
 use syntax_pos::Span;
+use syntax_pos::symbol::Symbol;
 
 #[derive(Clone, Debug)]
 pub enum PatternError {
@@ -66,125 +62,13 @@ pub struct Pattern<'tcx> {
     pub kind: Box<PatternKind<'tcx>>,
 }
 
-
-#[derive(Clone, Debug)]
-pub(crate) struct PatternTypeProjections<'tcx> {
-    contents: Vec<(PatternTypeProjection<'tcx>, Span)>,
-}
-
-impl<'tcx> PatternTypeProjections<'tcx> {
-    pub(crate) fn user_ty(self) -> UserTypeProjections<'tcx> {
-        UserTypeProjections::from_projections(
-            self.contents.into_iter().map(|(pat_ty_proj, span)| (pat_ty_proj.user_ty(), span)))
-    }
-
-    pub(crate) fn none() -> Self {
-        PatternTypeProjections { contents: vec![] }
-    }
-
-    pub(crate) fn ref_binding(&self) -> Self {
-        // FIXME(#47184): ignore for now
-        PatternTypeProjections { contents: vec![] }
-    }
-
-    fn map_projs(&self,
-                 mut f: impl FnMut(&PatternTypeProjection<'tcx>) -> PatternTypeProjection<'tcx>)
-                 -> Self
-    {
-        PatternTypeProjections {
-            contents: self.contents
-                .iter()
-                .map(|(proj, span)| (f(proj), *span))
-                .collect(), }
-    }
-
-    pub(crate) fn index(&self) -> Self { self.map_projs(|pat_ty_proj| pat_ty_proj.index()) }
-
-    pub(crate) fn subslice(&self, from: u32, to: u32) -> Self {
-        self.map_projs(|pat_ty_proj| pat_ty_proj.subslice(from, to))
-    }
-
-    pub(crate) fn deref(&self) -> Self { self.map_projs(|pat_ty_proj| pat_ty_proj.deref()) }
-
-    pub(crate) fn leaf(&self, field: Field) -> Self {
-        self.map_projs(|pat_ty_proj| pat_ty_proj.leaf(field))
-    }
-
-    pub(crate) fn variant(&self,
-                          adt_def: &'tcx AdtDef,
-                          variant_index: VariantIdx,
-                          field: Field) -> Self {
-        self.map_projs(|pat_ty_proj| pat_ty_proj.variant(adt_def, variant_index, field))
-    }
-
-    pub(crate) fn add_user_type(&self, user_ty: &PatternTypeProjection<'tcx>, sp: Span) -> Self {
-        let mut new = self.clone();
-        new.contents.push((user_ty.clone(), sp));
-        new
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct PatternTypeProjection<'tcx>(UserTypeProjection<'tcx>);
-
-impl<'tcx> PatternTypeProjection<'tcx> {
-    pub(crate) fn index(&self) -> Self {
-        let mut new = self.clone();
-        new.0.projs.push(ProjectionElem::Index(()));
-        new
-    }
-
-    pub(crate) fn subslice(&self, from: u32, to: u32) -> Self {
-        let mut new = self.clone();
-        new.0.projs.push(ProjectionElem::Subslice { from, to });
-        new
-    }
-
-    pub(crate) fn deref(&self) -> Self {
-        let mut new = self.clone();
-        new.0.projs.push(ProjectionElem::Deref);
-        new
-    }
-
-    pub(crate) fn leaf(&self, field: Field) -> Self {
-        let mut new = self.clone();
-        new.0.projs.push(ProjectionElem::Field(field, ()));
-        new
-    }
-
-    pub(crate) fn variant(&self,
-                          adt_def: &'tcx AdtDef,
-                          variant_index: VariantIdx,
-                          field: Field) -> Self {
-        let mut new = self.clone();
-        new.0.projs.push(ProjectionElem::Downcast(adt_def, variant_index));
-        new.0.projs.push(ProjectionElem::Field(field, ()));
-        new
-    }
-
-    pub(crate) fn from_canonical_ty(c_ty: ty::CanonicalTy<'tcx>) -> Self {
-        Self::from_user_type(UserTypeAnnotation::Ty(c_ty))
-    }
-
-    pub(crate) fn from_user_type(u_ty: UserTypeAnnotation<'tcx>) -> Self {
-        Self::from_user_type_proj(UserTypeProjection { base: u_ty, projs: vec![], })
-    }
-
-    pub(crate) fn from_user_type_proj(u_ty: UserTypeProjection<'tcx>) -> Self {
-        PatternTypeProjection(u_ty)
-    }
-
-    pub(crate) fn user_ty(self) -> UserTypeProjection<'tcx> { self.0 }
-}
-
 #[derive(Clone, Debug)]
 pub enum PatternKind<'tcx> {
     Wild,
 
     AscribeUserType {
-        user_ty: PatternTypeProjection<'tcx>,
+        user_ty: CanonicalTy<'tcx>,
         subpattern: Pattern<'tcx>,
-        user_ty_span: Span,
     },
 
     /// x, ref x, x @ P, etc
@@ -201,7 +85,7 @@ pub enum PatternKind<'tcx> {
     Variant {
         adt_def: &'tcx AdtDef,
         substs: &'tcx Substs<'tcx>,
-        variant_index: VariantIdx,
+        variant_index: usize,
         subpatterns: Vec<FieldPattern<'tcx>>,
     },
 
@@ -228,7 +112,7 @@ pub enum PatternKind<'tcx> {
 
     /// matches against a slice, checking the length and extracting elements.
     /// irrefutable when there is a slice pattern and both `prefix` and `suffix` are empty.
-    /// e.g., `&[ref xs..]`.
+    /// e.g. `&[ref xs..]`.
     Slice {
         prefix: Vec<Pattern<'tcx>>,
         slice: Option<Pattern<'tcx>>,
@@ -274,7 +158,7 @@ impl<'tcx> fmt::Display for Pattern<'tcx> {
                     }
                     _ => if let ty::Adt(adt, _) = self.ty.sty {
                         if !adt.is_enum() {
-                            Some(&adt.variants[VariantIdx::new(0)])
+                            Some(&adt.variants[0])
                         } else {
                             None
                         }
@@ -572,7 +456,7 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                                        })
                                        .collect();
 
-                        PatternKind::Leaf { subpatterns }
+                        PatternKind::Leaf { subpatterns: subpatterns }
                     }
                     ty::Error => { // Avoid ICE (#50577)
                         return Pattern { span: pat.span, ty, kind: Box::new(PatternKind::Wild) };
@@ -645,9 +529,8 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                                        field: Field::new(i),
                                        pattern: self.lower_pattern(field),
                                    })
-                    .collect();
-
-                self.lower_variant_or_leaf(def, pat.hir_id, pat.span, ty, subpatterns)
+                                   .collect();
+                self.lower_variant_or_leaf(def, pat.span, ty, subpatterns)
             }
 
             PatKind::Struct(ref qpath, ref fields, _) => {
@@ -663,7 +546,7 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                           })
                           .collect();
 
-                self.lower_variant_or_leaf(def, pat.hir_id, pat.span, ty, subpatterns)
+                self.lower_variant_or_leaf(def, pat.span, ty, subpatterns)
             }
         };
 
@@ -754,12 +637,12 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
     fn lower_variant_or_leaf(
         &mut self,
         def: Def,
-        hir_id: hir::HirId,
         span: Span,
         ty: Ty<'tcx>,
-        subpatterns: Vec<FieldPattern<'tcx>>,
-    ) -> PatternKind<'tcx> {
-        let mut kind = match def {
+        subpatterns: Vec<FieldPattern<'tcx>>)
+        -> PatternKind<'tcx>
+    {
+        match def {
             Def::Variant(variant_id) | Def::VariantCtor(variant_id, ..) => {
                 let enum_id = self.tcx.parent_def_id(variant_id).unwrap();
                 let adt_def = self.tcx.adt_def(enum_id);
@@ -779,39 +662,20 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                         subpatterns,
                     }
                 } else {
-                    PatternKind::Leaf { subpatterns }
+                    PatternKind::Leaf { subpatterns: subpatterns }
                 }
             }
 
             Def::Struct(..) | Def::StructCtor(..) | Def::Union(..) |
             Def::TyAlias(..) | Def::AssociatedTy(..) | Def::SelfTy(..) | Def::SelfCtor(..) => {
-                PatternKind::Leaf { subpatterns }
+                PatternKind::Leaf { subpatterns: subpatterns }
             }
 
             _ => {
                 self.errors.push(PatternError::NonConstPath(span));
                 PatternKind::Wild
             }
-        };
-
-        if let Some(user_ty) = self.user_substs_applied_to_ty_of_hir_id(hir_id) {
-            let subpattern = Pattern {
-                span,
-                ty,
-                kind: Box::new(kind),
-            };
-
-            debug!("pattern user_ty = {:?} for pattern at {:?}", user_ty, span);
-
-            let pat_ty = PatternTypeProjection::from_user_type(user_ty);
-            kind = PatternKind::AscribeUserType {
-                subpattern,
-                user_ty: pat_ty,
-                user_ty_span: span,
-            };
         }
-
-        kind
     }
 
     /// Takes a HIR Path. If the path is a constant, evaluates it and feeds
@@ -846,13 +710,13 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                             Ok(value) => {
                                 return self.const_to_pat(instance, value, id, span)
                             },
-                            Err(_) => {
-                                self.tcx.sess.span_err(
-                                    span,
+                            Err(err) => {
+                                err.report_as_error(
+                                    self.tcx.at(span),
                                     "could not evaluate constant pattern",
                                 );
                                 PatternKind::Wild
-                            }
+                            },
                         }
                     },
                     None => {
@@ -865,7 +729,7 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                     },
                 }
             }
-            _ => self.lower_variant_or_leaf(def, id, span, ty, vec![]),
+            _ => self.lower_variant_or_leaf(def, span, ty, vec![]),
         };
 
         Pattern {
@@ -891,11 +755,12 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                         );
                         *self.const_to_pat(instance, val, expr.hir_id, lit.span).kind
                     },
-                    Err(LitToConstError::UnparseableFloat) => {
-                        self.errors.push(PatternError::FloatBug);
+                    Err(e) => {
+                        if e == LitToConstError::UnparseableFloat {
+                            self.errors.push(PatternError::FloatBug);
+                        }
                         PatternKind::Wild
                     },
-                    Err(LitToConstError::Reported) => PatternKind::Wild,
                 }
             },
             hir::ExprKind::Path(ref qpath) => *self.lower_path(qpath, expr.hir_id, expr.span).kind,
@@ -913,11 +778,12 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                         );
                         *self.const_to_pat(instance, val, expr.hir_id, lit.span).kind
                     },
-                    Err(LitToConstError::UnparseableFloat) => {
-                        self.errors.push(PatternError::FloatBug);
+                    Err(e) => {
+                        if e == LitToConstError::UnparseableFloat {
+                            self.errors.push(PatternError::FloatBug);
+                        }
                         PatternKind::Wild
                     },
-                    Err(LitToConstError::Reported) => PatternKind::Wild,
                 }
             }
             _ => span_bug!(expr.span, "not a literal: {:?}", expr),
@@ -954,7 +820,7 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
         };
         let kind = match cv.ty.sty {
             ty::Float(_) => {
-                let id = self.tcx.hir().hir_to_node_id(id);
+                let id = self.tcx.hir.hir_to_node_id(id);
                 self.tcx.lint_node(
                     ::rustc::lint::builtin::ILLEGAL_FLOATING_POINT_LITERAL_PATTERN,
                     id,
@@ -1028,17 +894,6 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
     }
 }
 
-impl UserAnnotatedTyHelpers<'tcx, 'tcx> for PatternContext<'_, 'tcx> {
-    fn tcx(&self) -> TyCtxt<'_, 'tcx, 'tcx> {
-        self.tcx
-    }
-
-    fn tables(&self) -> &ty::TypeckTables<'tcx> {
-        self.tables
-    }
-}
-
-
 pub trait PatternFoldable<'tcx> : Sized {
     fn fold_with<F: PatternFolder<'tcx>>(&self, folder: &mut F) -> Self {
         self.super_fold_with(folder)
@@ -1092,8 +947,7 @@ macro_rules! CloneImpls {
 CloneImpls!{ <'tcx>
     Span, Field, Mutability, ast::Name, ast::NodeId, usize, &'tcx ty::Const<'tcx>,
     Region<'tcx>, Ty<'tcx>, BindingMode<'tcx>, &'tcx AdtDef,
-    &'tcx Substs<'tcx>, &'tcx Kind<'tcx>, UserTypeAnnotation<'tcx>,
-    UserTypeProjection<'tcx>, PatternTypeProjection<'tcx>
+    &'tcx Substs<'tcx>, &'tcx Kind<'tcx>, CanonicalTy<'tcx>
 }
 
 impl<'tcx> PatternFoldable<'tcx> for FieldPattern<'tcx> {
@@ -1129,12 +983,10 @@ impl<'tcx> PatternFoldable<'tcx> for PatternKind<'tcx> {
             PatternKind::Wild => PatternKind::Wild,
             PatternKind::AscribeUserType {
                 ref subpattern,
-                ref user_ty,
-                user_ty_span,
+                user_ty,
             } => PatternKind::AscribeUserType {
                 subpattern: subpattern.fold_with(folder),
                 user_ty: user_ty.fold_with(folder),
-                user_ty_span,
             },
             PatternKind::Binding {
                 mutability,
@@ -1159,7 +1011,7 @@ impl<'tcx> PatternFoldable<'tcx> for PatternKind<'tcx> {
             } => PatternKind::Variant {
                 adt_def: adt_def.fold_with(folder),
                 substs: substs.fold_with(folder),
-                variant_index,
+                variant_index: variant_index.fold_with(folder),
                 subpatterns: subpatterns.fold_with(folder)
             },
             PatternKind::Leaf {
@@ -1272,6 +1124,13 @@ pub fn compare_const_vals<'a, 'tcx>(
                         len_b,
                     ),
                 ) if ptr_a.offset.bytes() == 0 && ptr_b.offset.bytes() == 0 => {
+                    let len_a = len_a.not_undef().ok();
+                    let len_b = len_b.not_undef().ok();
+                    if len_a.is_none() || len_b.is_none() {
+                        tcx.sess.struct_err("str slice len is undef").delay_as_bug();
+                    }
+                    let len_a = len_a?;
+                    let len_b = len_b?;
                     if let Ok(len_a) = len_a.to_bits(tcx.data_layout.pointer_size) {
                         if let Ok(len_b) = len_b.to_bits(tcx.data_layout.pointer_size) {
                             if len_a == len_b {
@@ -1291,4 +1150,125 @@ pub fn compare_const_vals<'a, 'tcx>(
     }
 
     fallback()
+}
+
+#[derive(PartialEq)]
+enum LitToConstError {
+    UnparseableFloat,
+    Propagated,
+}
+
+// FIXME: Combine with rustc_mir::hair::cx::const_eval_literal
+fn lit_to_const<'a, 'tcx>(lit: &'tcx ast::LitKind,
+                          tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                          ty: Ty<'tcx>,
+                          neg: bool)
+                          -> Result<&'tcx ty::Const<'tcx>, LitToConstError> {
+    use syntax::ast::*;
+
+    use rustc::mir::interpret::*;
+    let lit = match *lit {
+        LitKind::Str(ref s, _) => {
+            let s = s.as_str();
+            let id = tcx.allocate_bytes(s.as_bytes());
+            ConstValue::new_slice(Scalar::Ptr(id.into()), s.len() as u64, tcx)
+        },
+        LitKind::ByteStr(ref data) => {
+            let id = tcx.allocate_bytes(data);
+            ConstValue::Scalar(Scalar::Ptr(id.into()))
+        },
+        LitKind::Byte(n) => ConstValue::Scalar(Scalar::Bits {
+            bits: n as u128,
+            size: 1,
+        }),
+        LitKind::Int(n, _) => {
+            enum Int {
+                Signed(IntTy),
+                Unsigned(UintTy),
+            }
+            let ity = match ty.sty {
+                ty::Int(IntTy::Isize) => Int::Signed(tcx.sess.target.isize_ty),
+                ty::Int(other) => Int::Signed(other),
+                ty::Uint(UintTy::Usize) => Int::Unsigned(tcx.sess.target.usize_ty),
+                ty::Uint(other) => Int::Unsigned(other),
+                ty::Error => { // Avoid ICE (#51963)
+                    return Err(LitToConstError::Propagated);
+                }
+                _ => bug!("literal integer type with bad type ({:?})", ty.sty),
+            };
+            // This converts from LitKind::Int (which is sign extended) to
+            // Scalar::Bytes (which is zero extended)
+            let n = match ity {
+                // FIXME(oli-obk): are these casts correct?
+                Int::Signed(IntTy::I8) if neg =>
+                    (n as i8).overflowing_neg().0 as u8 as u128,
+                Int::Signed(IntTy::I16) if neg =>
+                    (n as i16).overflowing_neg().0 as u16 as u128,
+                Int::Signed(IntTy::I32) if neg =>
+                    (n as i32).overflowing_neg().0 as u32 as u128,
+                Int::Signed(IntTy::I64) if neg =>
+                    (n as i64).overflowing_neg().0 as u64 as u128,
+                Int::Signed(IntTy::I128) if neg =>
+                    (n as i128).overflowing_neg().0 as u128,
+                Int::Signed(IntTy::I8) | Int::Unsigned(UintTy::U8) => n as u8 as u128,
+                Int::Signed(IntTy::I16) | Int::Unsigned(UintTy::U16) => n as u16 as u128,
+                Int::Signed(IntTy::I32) | Int::Unsigned(UintTy::U32) => n as u32 as u128,
+                Int::Signed(IntTy::I64) | Int::Unsigned(UintTy::U64) => n as u64 as u128,
+                Int::Signed(IntTy::I128)| Int::Unsigned(UintTy::U128) => n,
+                _ => bug!(),
+            };
+            let size = tcx.layout_of(ty::ParamEnv::empty().and(ty)).unwrap().size.bytes() as u8;
+            ConstValue::Scalar(Scalar::Bits {
+                bits: n,
+                size,
+            })
+        },
+        LitKind::Float(n, fty) => {
+            parse_float(n, fty, neg).map_err(|_| LitToConstError::UnparseableFloat)?
+        }
+        LitKind::FloatUnsuffixed(n) => {
+            let fty = match ty.sty {
+                ty::Float(fty) => fty,
+                _ => bug!()
+            };
+            parse_float(n, fty, neg).map_err(|_| LitToConstError::UnparseableFloat)?
+        }
+        LitKind::Bool(b) => ConstValue::Scalar(Scalar::from_bool(b)),
+        LitKind::Char(c) => ConstValue::Scalar(Scalar::from_char(c)),
+    };
+    Ok(ty::Const::from_const_value(tcx, lit, ty))
+}
+
+pub fn parse_float<'tcx>(
+    num: Symbol,
+    fty: ast::FloatTy,
+    neg: bool,
+) -> Result<ConstValue<'tcx>, ()> {
+    let num = num.as_str();
+    use rustc_apfloat::ieee::{Single, Double};
+    use rustc_apfloat::Float;
+    let (bits, size) = match fty {
+        ast::FloatTy::F32 => {
+            num.parse::<f32>().map_err(|_| ())?;
+            let mut f = num.parse::<Single>().unwrap_or_else(|e| {
+                panic!("apfloat::ieee::Single failed to parse `{}`: {:?}", num, e)
+            });
+            if neg {
+                f = -f;
+            }
+            (f.to_bits(), 4)
+        }
+        ast::FloatTy::F64 => {
+            num.parse::<f64>().map_err(|_| ())?;
+            let mut f = num.parse::<Double>().unwrap_or_else(|e| {
+                panic!("apfloat::ieee::Single failed to parse `{}`: {:?}", num, e)
+            });
+            if neg {
+                f = -f;
+            }
+            (f.to_bits(), 8)
+        }
+    };
+
+    Ok(ConstValue::Scalar(Scalar::Bits { bits, size }))
 }

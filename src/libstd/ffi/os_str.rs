@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use borrow::{Borrow, Cow};
 use fmt;
 use ops;
@@ -41,13 +31,6 @@ use sys_common::{AsInner, IntoInner, FromInner};
 /// `OsString` is to [`&OsStr`] as [`String`] is to [`&str`]: the former
 /// in each pair are owned strings; the latter are borrowed
 /// references.
-///
-/// Note, `OsString` and `OsStr` internally do not necessarily hold strings in
-/// the form native to the platform; While on Unix, strings are stored as a
-/// sequence of 8-bit values, on Windows, where strings are 16-bit value based
-/// as just discussed, strings are also actually stored as a sequence of 8-bit
-/// values, encoded in a less-strict variant of UTF-8. This is useful to
-/// understand when handling capacity and length values.
 ///
 /// # Creating an `OsString`
 ///
@@ -547,7 +530,7 @@ impl OsStr {
     /// // example.
     ///
     /// #[cfg(any(unix, target_os = "redox"))] {
-    ///     use std::ffi::OsStr;
+    /// use std::ffi::OsStr;
     ///     use std::os::unix::ffi::OsStrExt;
     ///
     ///     // Here, the values 0x66 and 0x6f correspond to 'f' and 'o'
@@ -615,19 +598,14 @@ impl OsStr {
 
     /// Returns the length of this `OsStr`.
     ///
-    /// Note that this does **not** return the number of bytes in the string in
-    /// OS string form.
+    /// Note that this does **not** return the number of bytes in this string
+    /// as, for example, OS strings on Windows are encoded as a list of [`u16`]
+    /// rather than a list of bytes. This number is simply useful for passing to
+    /// other methods like [`OsString::with_capacity`] to avoid reallocations.
     ///
-    /// The length returned is that of the underlying storage used by `OsStr`;
-    /// As discussed in the [`OsString`] introduction, [`OsString`] and `OsStr`
-    /// store strings in a form best suited for cheap inter-conversion between
-    /// native-platform and Rust string forms, which may differ significantly
-    /// from both of them, including in storage size and encoding.
+    /// See `OsStr` introduction for more information about encoding.
     ///
-    /// This number is simply useful for passing to other methods, like
-    /// [`OsString::with_capacity`] to avoid reallocations.
-    ///
-    /// [`OsString`]: struct.OsString.html
+    /// [`u16`]: ../primitive.u16.html
     /// [`OsString::with_capacity`]: struct.OsString.html#method.with_capacity
     ///
     /// # Examples

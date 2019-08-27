@@ -221,7 +221,6 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
     fn cannot_uniquely_borrow_by_one_closure(
         self,
         new_loan_span: Span,
-        container_name: &str,
         desc_new: &str,
         opt_via: &str,
         old_loan_span: Span,
@@ -242,7 +241,7 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
         );
         err.span_label(
             new_loan_span,
-            format!("{} construction occurs here{}", container_name, opt_via),
+            format!("closure construction occurs here{}", opt_via),
         );
         err.span_label(old_loan_span, format!("borrow occurs here{}", old_opt_via));
         if let Some(previous_end_span) = previous_end_span {
@@ -254,14 +253,12 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
     fn cannot_reborrow_already_uniquely_borrowed(
         self,
         new_loan_span: Span,
-        container_name: &str,
         desc_new: &str,
         opt_via: &str,
         kind_new: &str,
         old_loan_span: Span,
         old_opt_via: &str,
         previous_end_span: Option<Span>,
-        second_borrow_desc: &str,
         o: Origin,
     ) -> DiagnosticBuilder<'cx> {
         let mut err = struct_span_err!(
@@ -275,13 +272,10 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
             kind_new,
             OGN = o
         );
-        err.span_label(
-            new_loan_span,
-            format!("{}borrow occurs here{}", second_borrow_desc, opt_via),
-        );
+        err.span_label(new_loan_span, format!("borrow occurs here{}", opt_via));
         err.span_label(
             old_loan_span,
-            format!("{} construction occurs here{}", container_name, old_opt_via),
+            format!("closure construction occurs here{}", old_opt_via),
         );
         if let Some(previous_end_span) = previous_end_span {
             err.span_label(previous_end_span, "borrow from closure ends here");
@@ -480,7 +474,7 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
     ) -> DiagnosticBuilder<'cx> {
         let moved_path = moved_path
             .map(|mp| format!(": `{}`", mp))
-            .unwrap_or_default();
+            .unwrap_or(String::new());
 
         let err = struct_span_err!(
             self,
@@ -579,7 +573,7 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
             OGN = o
         );
         err.span_label(mutate_span, format!("cannot {}", action));
-        err.span_label(match_span, String::from("value is immutable in match guard"));
+        err.span_label(match_span, format!("value is immutable in match guard"));
 
         self.cancel_if_wrong_origin(err, o)
     }
@@ -631,31 +625,6 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
             "{} does not live long enough{OGN}",
             path,
             OGN = o
-        );
-
-        self.cancel_if_wrong_origin(err, o)
-    }
-
-    fn cannot_return_reference_to_local(
-        self,
-        span: Span,
-        reference_desc: &str,
-        path_desc: &str,
-        o: Origin,
-    ) -> DiagnosticBuilder<'cx> {
-        let mut err = struct_span_err!(
-            self,
-            span,
-            E0515,
-            "cannot return {REFERENCE} {LOCAL}{OGN}",
-            REFERENCE=reference_desc,
-            LOCAL=path_desc,
-            OGN = o
-        );
-
-        err.span_label(
-            span,
-            format!("returns a {} data owned by the current function", reference_desc),
         );
 
         self.cancel_if_wrong_origin(err, o)
@@ -742,24 +711,6 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
                 closure_span,
                 format!("may outlive borrowed value {}", borrowed_path),
             );
-
-        self.cancel_if_wrong_origin(err, o)
-    }
-
-    fn borrowed_data_escapes_closure(
-        self,
-        escape_span: Span,
-        escapes_from: &str,
-        o: Origin,
-    ) -> DiagnosticBuilder<'cx> {
-        let err = struct_span_err!(
-            self,
-            escape_span,
-            E0521,
-            "borrowed data escapes outside of {}{OGN}",
-            escapes_from,
-            OGN = o
-        );
 
         self.cancel_if_wrong_origin(err, o)
     }

@@ -1,13 +1,3 @@
-// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Standard library macros
 //!
 //! This modules contains a set of macros which are exported from the standard
@@ -16,7 +6,7 @@
 
 /// The entry point for panic of Rust threads.
 ///
-/// This allows a program to terminate immediately and provide feedback
+/// This allows a program to to terminate immediately and provide feedback
 /// to the caller of the program. `panic!` should be used when a program reaches
 /// an unrecoverable problem.
 ///
@@ -32,7 +22,7 @@
 ///
 /// [`Result`] enum is often a better solution for recovering from errors than
 /// using the `panic!` macro.  This macro should be used to avoid proceeding using
-/// incorrect values, such as from external sources. Detailed information about
+/// incorrect values, such as from external sources.  Detailed information about
 /// error handling is found in the [book].
 ///
 /// The multi-argument form of this macro panics with a string and has the
@@ -45,7 +35,7 @@
 /// [`Result`]: ../std/result/enum.Result.html
 /// [`format!`]: ../std/macro.format.html
 /// [`compile_error!`]: ../std/macro.compile_error.html
-/// [book]: ../book/ch09-00-error-handling.html
+/// [book]: ../book/second-edition/ch09-01-unrecoverable-errors-with-panic.html
 ///
 /// # Current implementation
 ///
@@ -139,7 +129,7 @@ macro_rules! print {
 ///
 /// [`format!`]: ../std/macro.format.html
 /// [`std::fmt`]: ../std/fmt/index.html
-/// [`eprintln!`]: ../std/macro.eprintln.html
+/// [`eprintln!`]: ../std/macro.eprint.html
 /// # Panics
 ///
 /// Panics if writing to `io::stdout` fails.
@@ -332,6 +322,7 @@ macro_rules! dbg {
     }
 }
 
+/// A macro to await on an async call.
 #[macro_export]
 #[unstable(feature = "await_macro", issue = "50547")]
 #[allow_internal_unstable]
@@ -831,8 +822,8 @@ mod builtin {
     /// boolean expression evaluation of configuration flags. This frequently
     /// leads to less duplicated code.
     ///
-    /// The syntax given to this macro is the same syntax as the `cfg`
-    /// attribute.
+    /// The syntax given to this macro is the same syntax as [the `cfg`
+    /// attribute](../book/first-edition/conditional-compilation.html).
     ///
     /// # Examples
     ///
@@ -907,7 +898,7 @@ mod builtin {
     /// Unsafe code relies on `assert!` to enforce run-time invariants that, if
     /// violated could lead to unsafety.
     ///
-    /// Other use-cases of `assert!` include testing and enforcing run-time
+    /// Other use-cases of `assert!` include [testing] and enforcing run-time
     /// invariants in safe code (whose violation cannot result in unsafety).
     ///
     /// # Custom Messages
@@ -918,6 +909,7 @@ mod builtin {
     ///
     /// [`panic!`]: macro.panic.html
     /// [`debug_assert!`]: macro.debug_assert.html
+    /// [testing]: ../book/second-edition/ch11-01-writing-tests.html#checking-results-with-the-assert-macro
     /// [`std::fmt`]: ../std/fmt/index.html
     ///
     /// # Examples

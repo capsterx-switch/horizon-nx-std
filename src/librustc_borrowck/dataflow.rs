@@ -71,7 +71,7 @@ pub struct DataFlowContext<'a, 'tcx: 'a, O> {
     scope_kills: Vec<usize>,
 
     /// bits killed as we exit the cfg node directly; if it is jumped
-    /// over, e.g., via `break`, the kills are not reflected in the
+    /// over, e.g. via `break`, the kills are not reflected in the
     /// jump's effects. Updated by `add_kill(KillFrom::Execution)`.
     action_kills: Vec<usize>,
 
@@ -111,7 +111,7 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
 
 impl<'a, 'tcx, O:DataFlowOperator> pprust::PpAnn for DataFlowContext<'a, 'tcx, O> {
     fn nested(&self, state: &mut pprust::State, nested: pprust::Nested) -> io::Result<()> {
-        pprust::PpAnn::nested(self.tcx.hir(), state, nested)
+        pprust::PpAnn::nested(&self.tcx.hir, state, nested)
     }
     fn pre(&self,
            ps: &mut pprust::State,
@@ -169,10 +169,10 @@ impl<'a, 'tcx, O:DataFlowOperator> pprust::PpAnn for DataFlowContext<'a, 'tcx, O
 fn build_local_id_to_index(body: Option<&hir::Body>,
                            cfg: &cfg::CFG)
                            -> FxHashMap<hir::ItemLocalId, Vec<CFGIndex>> {
-    let mut index = FxHashMap::default();
+    let mut index = FxHashMap();
 
     // FIXME(#15020) Would it be better to fold formals from decl
-    // into cfg itself?  i.e., introduce a fn-based flow-graph in
+    // into cfg itself?  i.e. introduce a fn-based flow-graph in
     // addition to the current block-based flow-graph, rather than
     // have to put traversals like this here?
     if let Some(body) = body {
@@ -430,7 +430,7 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
                 for offset in 0..usize_bits {
                     let bit = 1 << offset;
                     if (word & bit) != 0 {
-                        // N.B., we round up the total number of bits
+                        // NB: we round up the total number of bits
                         // that we store in any given bit set so that
                         // it is an even multiple of usize::BITS.  This
                         // means that there may be some stray bits at

@@ -55,9 +55,8 @@ fn mirror_stmts<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
                                 -> Vec<StmtRef<'tcx>> {
     let mut result = vec![];
     for (index, stmt) in stmts.iter().enumerate() {
-        let hir_id = cx.tcx.hir().node_to_hir_id(stmt.node.id());
+        let hir_id = cx.tcx.hir.node_to_hir_id(stmt.node.id());
         let opt_dxn_ext = cx.region_scope_tree.opt_destruction_scope(hir_id.local_id);
-        let stmt_span = StatementSpan(cx.tcx.hir().span(stmt.node.id()));
         match stmt.node {
             hir::StmtKind::Expr(ref expr, _) |
             hir::StmtKind::Semi(ref expr, _) => {
@@ -70,7 +69,6 @@ fn mirror_stmts<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
                         expr: expr.to_ref(),
                     },
                     opt_destruction_scope: opt_dxn_ext,
-                    span: stmt_span,
                 })))
             }
             hir::StmtKind::Decl(ref decl, _) => {
@@ -88,13 +86,12 @@ fn mirror_stmts<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
                         let mut pattern = cx.pattern_from_hir(&local.pat);
 
                         if let Some(ty) = &local.ty {
-                            if let Some(&user_ty) = cx.tables.user_provided_tys().get(ty.hir_id) {
+                            if let Some(user_ty) = cx.tables.user_provided_tys().get(ty.hir_id) {
                                 pattern = Pattern {
                                     ty: pattern.ty,
                                     span: pattern.span,
                                     kind: Box::new(PatternKind::AscribeUserType {
-                                        user_ty: PatternTypeProjection::from_canonical_ty(user_ty),
-                                        user_ty_span: ty.span,
+                                        user_ty: *user_ty,
                                         subpattern: pattern
                                     })
                                 };
@@ -113,7 +110,6 @@ fn mirror_stmts<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
                                 lint_level: cx.lint_level_of(local.id),
                             },
                             opt_destruction_scope: opt_dxn_ext,
-                            span: stmt_span,
                         })));
                     }
                 }

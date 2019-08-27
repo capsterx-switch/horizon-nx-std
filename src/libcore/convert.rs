@@ -104,6 +104,7 @@
 /// assert_eq!(vec![1, 3], filtered);
 /// ```
 #[unstable(feature = "convert_id", issue = "53500")]
+#[rustc_const_unstable(feature = "const_convert_id")]
 #[inline]
 pub const fn identity<T>(x: T) -> T { x }
 
@@ -327,8 +328,7 @@ pub trait Into<T>: Sized {
 /// An example usage for error handling:
 ///
 /// ```
-/// use std::fs;
-/// use std::io;
+/// use std::io::{self, Read};
 /// use std::num;
 ///
 /// enum CliError {
@@ -349,7 +349,9 @@ pub trait Into<T>: Sized {
 /// }
 ///
 /// fn open_and_parse_file(file_name: &str) -> Result<i32, CliError> {
-///     let mut contents = fs::read_to_string(&file_name)?;
+///     let mut file = std::fs::File::open("test")?;
+///     let mut contents = String::new();
+///     file.read_to_string(&mut contents)?;
 ///     let num: i32 = contents.trim().parse()?;
 ///     Ok(num)
 /// }
@@ -405,7 +407,7 @@ pub trait TryFrom<T>: Sized {
 
 // As lifts over &
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized, U: ?Sized> AsRef<U> for &T where T: AsRef<U>
+impl<'a, T: ?Sized, U: ?Sized> AsRef<U> for &'a T where T: AsRef<U>
 {
     fn as_ref(&self) -> &U {
         <T as AsRef<U>>::as_ref(*self)
@@ -414,7 +416,7 @@ impl<T: ?Sized, U: ?Sized> AsRef<U> for &T where T: AsRef<U>
 
 // As lifts over &mut
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized, U: ?Sized> AsRef<U> for &mut T where T: AsRef<U>
+impl<'a, T: ?Sized, U: ?Sized> AsRef<U> for &'a mut T where T: AsRef<U>
 {
     fn as_ref(&self) -> &U {
         <T as AsRef<U>>::as_ref(*self)
@@ -431,7 +433,7 @@ impl<T: ?Sized, U: ?Sized> AsRef<U> for &mut T where T: AsRef<U>
 
 // AsMut lifts over &mut
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized, U: ?Sized> AsMut<U> for &mut T where T: AsMut<U>
+impl<'a, T: ?Sized, U: ?Sized> AsMut<U> for &'a mut T where T: AsMut<U>
 {
     fn as_mut(&mut self) -> &mut U {
         (*self).as_mut()

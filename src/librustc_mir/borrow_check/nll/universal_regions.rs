@@ -210,8 +210,8 @@ impl<'tcx> UniversalRegions<'tcx> {
         param_env: ty::ParamEnv<'tcx>,
     ) -> Self {
         let tcx = infcx.tcx;
-        let mir_node_id = tcx.hir().as_local_node_id(mir_def_id).unwrap();
-        let mir_hir_id = tcx.hir().node_to_hir_id(mir_node_id);
+        let mir_node_id = tcx.hir.as_local_node_id(mir_def_id).unwrap();
+        let mir_hir_id = tcx.hir.node_to_hir_id(mir_node_id);
         UniversalRegionsBuilder {
             infcx,
             mir_def_id,
@@ -232,13 +232,13 @@ impl<'tcx> UniversalRegions<'tcx> {
     /// `V[1]: V[2]`.
     pub fn closure_mapping(
         tcx: TyCtxt<'_, '_, 'tcx>,
-        closure_substs: &'tcx Substs<'tcx>,
+        closure_ty: Ty<'tcx>,
         expected_num_vars: usize,
         closure_base_def_id: DefId,
     ) -> IndexVec<RegionVid, ty::Region<'tcx>> {
         let mut region_mapping = IndexVec::with_capacity(expected_num_vars);
         region_mapping.push(tcx.types.re_static);
-        tcx.for_each_free_region(&closure_substs, |fr| {
+        tcx.for_each_free_region(&closure_ty, |fr| {
             region_mapping.push(fr);
         });
 
@@ -485,7 +485,7 @@ impl<'cx, 'gcx, 'tcx> UniversalRegionsBuilder<'cx, 'gcx, 'tcx> {
         let tcx = self.infcx.tcx;
         let closure_base_def_id = tcx.closure_base_def_id(self.mir_def_id);
 
-        match tcx.hir().body_owner_kind(self.mir_node_id) {
+        match tcx.hir.body_owner_kind(self.mir_node_id) {
             BodyOwnerKind::Fn => {
                 let defining_ty = if self.mir_def_id == closure_base_def_id {
                     tcx.type_of(closure_base_def_id)
@@ -780,9 +780,9 @@ fn for_each_late_bound_region_defined_on<'tcx>(
                 owner: fn_def_id.index,
                 local_id: *late_bound,
             };
-            let region_node_id = tcx.hir().hir_to_node_id(hir_id);
-            let name = tcx.hir().name(region_node_id).as_interned_str();
-            let region_def_id = tcx.hir().local_def_id(region_node_id);
+            let region_node_id = tcx.hir.hir_to_node_id(hir_id);
+            let name = tcx.hir.name(region_node_id).as_interned_str();
+            let region_def_id = tcx.hir.local_def_id(region_node_id);
             let liberated_region = tcx.mk_region(ty::ReFree(ty::FreeRegion {
                 scope: fn_def_id,
                 bound_region: ty::BoundRegion::BrNamed(region_def_id, name),

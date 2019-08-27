@@ -55,22 +55,23 @@
 //! ported to this system, and which relies on string concatenation at the
 //! time of error detection.
 
-use super::lexical_region_resolve::RegionResolutionError;
-use super::region_constraints::GenericKind;
+use infer;
 use super::{InferCtxt, RegionVariableOrigin, SubregionOrigin, TypeTrace, ValuePairs};
-use infer::{self, SuppressRegionErrors};
+use super::region_constraints::GenericKind;
+use super::lexical_region_resolve::RegionResolutionError;
 
-use errors::{Applicability, DiagnosticBuilder, DiagnosticStyledString};
-use hir;
-use hir::def_id::DefId;
-use hir::Node;
-use middle::region;
 use std::{cmp, fmt};
+use hir;
+use hir::Node;
+use hir::def_id::DefId;
+use middle::region;
+use traits::{ObligationCause, ObligationCauseCode};
+use ty::{self, subst::Subst, Region, Ty, TyCtxt, TypeFoldable, TyKind};
+use ty::error::TypeError;
+use session::config::BorrowckMode;
 use syntax::ast::DUMMY_NODE_ID;
 use syntax_pos::{Pos, Span};
-use traits::{ObligationCause, ObligationCauseCode};
-use ty::error::TypeError;
-use ty::{self, subst::Subst, Region, Ty, TyCtxt, TyKind, TypeFoldable};
+use errors::{Applicability, DiagnosticBuilder, DiagnosticStyledString};
 
 mod note;
 
@@ -82,7 +83,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     pub fn note_and_explain_region(
         self,
         region_scope_tree: &region::ScopeTree,
-        err: &mut DiagnosticBuilder<'_>,
+        err: &mut DiagnosticBuilder,
         prefix: &str,
         region: ty::Region<'tcx>,
         suffix: &str,
@@ -97,7 +98,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                     )
                 };
                 let span = scope.span(self, region_scope_tree);
-                let tag = match self.hir().find(scope.node_id(self, region_scope_tree)) {
+                let tag = match self.hir.find(scope.node_id(self, region_scope_tree)) {
                     Some(Node::Block(_)) => "block",
                     Some(Node::Expr(expr)) => match expr.node {
                         hir::ExprKind::Call(..) => "call",
@@ -142,16 +143,17 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
             ty::ReEmpty => ("the empty lifetime".to_owned(), None),
 
-            // FIXME(#13998) RePlaceholder should probably print like
+            // FIXME(#13998) ReSkolemized should probably print like
             // ReFree rather than dumping Debug output on the user.
             //
             // We shouldn't really be having unification failures with ReVar
             // and ReLateBound though.
-            ty::RePlaceholder(..) | ty::ReVar(_) | ty::ReLateBound(..) | ty::ReErased => {
+            ty::ReSkolemized(..) | ty::ReVar(_) | ty::ReLateBound(..) | ty::ReErased => {
                 (format!("lifetime {:?}", region), None)
             }
 
             // We shouldn't encounter an error message with ReClosureBound.
+            ty::ReCanonical(..) |
             ty::ReClosureBound(..) => {
                 bug!("encountered unexpected ReClosureBound: {:?}", region,);
             }
@@ -162,7 +164,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
     pub fn note_and_explain_free_region(
         self,
-        err: &mut DiagnosticBuilder<'_>,
+        err: &mut DiagnosticBuilder,
         prefix: &str,
         region: ty::Region<'tcx>,
         suffix: &str,
@@ -174,11 +176,10 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
     fn msg_span_from_free_region(self, region: ty::Region<'tcx>) -> (String, Option<Span>) {
         match *region {
-            ty::ReEarlyBound(_) | ty::ReFree(_) => {
+            ty::ReEarlyBound(_) | ty::ReFree(_)  => {
                 self.msg_span_from_early_bound_and_free_regions(region)
-            }
+            },
             ty::ReStatic => ("the static lifetime".to_owned(), None),
-            ty::ReEmpty => ("an empty lifetime".to_owned(), None),
             _ => bug!("{:?}", region),
         }
     }
@@ -190,34 +191,31 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         let cm = self.sess.source_map();
 
         let scope = region.free_region_binding_scope(self);
-        let node = self.hir().as_local_node_id(scope).unwrap_or(DUMMY_NODE_ID);
-        let tag = match self.hir().find(node) {
+        let node = self.hir.as_local_node_id(scope).unwrap_or(DUMMY_NODE_ID);
+        let tag = match self.hir.find(node) {
             Some(Node::Block(_)) | Some(Node::Expr(_)) => "body",
             Some(Node::Item(it)) => Self::item_scope_tag(&it),
             Some(Node::TraitItem(it)) => Self::trait_item_scope_tag(&it),
             Some(Node::ImplItem(it)) => Self::impl_item_scope_tag(&it),
-            _ => unreachable!(),
+            _ => unreachable!()
         };
         let (prefix, span) = match *region {
             ty::ReEarlyBound(ref br) => {
-                let mut sp = cm.def_span(self.hir().span(node));
-                if let Some(param) = self.hir()
-                    .get_generics(scope)
-                    .and_then(|generics| generics.get_named(&br.name))
-                {
+                let mut sp = cm.def_span(self.hir.span(node));
+                if let Some(param) = self.hir.get_generics(scope).and_then(|generics| {
+                    generics.get_named(&br.name)
+                }) {
                     sp = param.span;
                 }
                 (format!("the lifetime {} as defined on", br.name), sp)
             }
             ty::ReFree(ty::FreeRegion {
-                bound_region: ty::BoundRegion::BrNamed(_, ref name),
-                ..
+                bound_region: ty::BoundRegion::BrNamed(_, ref name), ..
             }) => {
-                let mut sp = cm.def_span(self.hir().span(node));
-                if let Some(param) = self.hir()
-                    .get_generics(scope)
-                    .and_then(|generics| generics.get_named(&name))
-                {
+                let mut sp = cm.def_span(self.hir.span(node));
+                if let Some(param) = self.hir.get_generics(scope).and_then(|generics| {
+                    generics.get_named(&name)
+                }) {
                     sp = param.span;
                 }
                 (format!("the lifetime {} as defined on", name), sp)
@@ -225,15 +223,15 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             ty::ReFree(ref fr) => match fr.bound_region {
                 ty::BrAnon(idx) => (
                     format!("the anonymous lifetime #{} defined on", idx + 1),
-                    self.hir().span(node),
+                    self.hir.span(node),
                 ),
                 ty::BrFresh(_) => (
                     "an anonymous lifetime defined on".to_owned(),
-                    self.hir().span(node),
+                    self.hir.span(node),
                 ),
                 _ => (
                     format!("the lifetime {} as defined on", fr.bound_region),
-                    cm.def_span(self.hir().span(node)),
+                    cm.def_span(self.hir.span(node)),
                 ),
             },
             _ => bug!(),
@@ -243,7 +241,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     }
 
     fn emit_msg_span(
-        err: &mut DiagnosticBuilder<'_>,
+        err: &mut DiagnosticBuilder,
         prefix: &str,
         description: String,
         span: Option<Span>,
@@ -280,9 +278,9 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     fn impl_item_scope_tag(item: &hir::ImplItem) -> &'static str {
         match item.node {
             hir::ImplItemKind::Method(..) => "method body",
-            hir::ImplItemKind::Const(..)
-            | hir::ImplItemKind::Existential(..)
-            | hir::ImplItemKind::Type(..) => "associated item",
+            hir::ImplItemKind::Const(..) |
+            hir::ImplItemKind::Existential(..) |
+            hir::ImplItemKind::Type(..) => "associated item",
         }
     }
 
@@ -300,16 +298,20 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         &self,
         region_scope_tree: &region::ScopeTree,
         errors: &Vec<RegionResolutionError<'tcx>>,
-        suppress: SuppressRegionErrors,
+        will_later_be_reported_by_nll: bool,
     ) {
-        debug!(
-            "report_region_errors(): {} errors to start, suppress = {:?}",
-            errors.len(),
-            suppress
-        );
+        debug!("report_region_errors(): {} errors to start", errors.len());
 
-        if suppress.suppressed() {
-            return;
+        // If the errors will later be reported by NLL, choose wether to display them or not based
+        // on the borrowck mode
+        if will_later_be_reported_by_nll {
+            match self.tcx.borrowck_mode() {
+                // If we're on AST or Migrate mode, report AST region errors
+                BorrowckMode::Ast | BorrowckMode::Migrate => {},
+                // If we're on MIR or Compare mode, don't report AST region errors as they should
+                // be reported by NLL
+                BorrowckMode::Compare | BorrowckMode::Mir => return,
+            }
         }
 
         // try to pre-process the errors, which will group some of them
@@ -407,10 +409,10 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             errors.clone()
         } else {
             errors
-            .iter()
-            .filter(|&e| !is_bound_failure(e))
-            .cloned()
-            .collect()
+                .iter()
+                .filter(|&e| !is_bound_failure(e))
+                .cloned()
+                .collect()
         };
 
         // sort the errors by span, for better error message stability.
@@ -425,11 +427,11 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     /// Adds a note if the types come from similarly named crates
     fn check_and_note_conflicting_crates(
         &self,
-        err: &mut DiagnosticBuilder<'_>,
+        err: &mut DiagnosticBuilder,
         terr: &TypeError<'tcx>,
         sp: Span,
     ) {
-        let report_path_match = |err: &mut DiagnosticBuilder<'_>, did1: DefId, did2: DefId| {
+        let report_path_match = |err: &mut DiagnosticBuilder, did1: DefId, did2: DefId| {
             // Only external crates, if either is from a local
             // module we could have false positives
             if !(did1.is_local() || did2.is_local()) && did1.krate != did2.krate {
@@ -456,10 +458,11 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             TypeError::Sorts(ref exp_found) => {
                 // if they are both "path types", there's a chance of ambiguity
                 // due to different versions of the same crate
-                if let (&ty::Adt(exp_adt, _), &ty::Adt(found_adt, _))
-                     = (&exp_found.expected.sty, &exp_found.found.sty)
-                {
-                    report_path_match(err, exp_adt.did, found_adt.did);
+                match (&exp_found.expected.sty, &exp_found.found.sty) {
+                    (&ty::Adt(exp_adt, _), &ty::Adt(found_adt, _)) => {
+                        report_path_match(err, exp_adt.did, found_adt.did);
+                    }
+                    _ => (),
                 }
             }
             TypeError::Traits(ref exp_found) => {
@@ -479,8 +482,17 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                     } else {
                         err.span_label(arm_span, msg);
                     }
-                }
-                hir::MatchSource::TryDesugar => {}
+                },
+                hir::MatchSource::TryDesugar => { // Issue #51632
+                    if let Ok(try_snippet) = self.tcx.sess.source_map().span_to_snippet(arm_span) {
+                        err.span_suggestion_with_applicability(
+                            arm_span,
+                            "try wrapping with a success variant",
+                            format!("Ok({})", try_snippet),
+                            Applicability::MachineApplicable
+                        );
+                    }
+                },
                 _ => {
                     let msg = "match arm with an incompatible type";
                     if self.tcx.sess.source_map().is_multiline(arm_span) {
@@ -629,21 +641,16 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     fn strip_generic_default_params(
         &self,
         def_id: DefId,
-        substs: &ty::subst::Substs<'tcx>,
+        substs: &ty::subst::Substs<'tcx>
     ) -> &'tcx ty::subst::Substs<'tcx> {
         let generics = self.tcx.generics_of(def_id);
         let mut num_supplied_defaults = 0;
-        let mut type_params = generics
-            .params
-            .iter()
-            .rev()
-            .filter_map(|param| match param.kind {
-                ty::GenericParamDefKind::Lifetime => None,
-                ty::GenericParamDefKind::Type { has_default, .. } => {
-                    Some((param.def_id, has_default))
-                }
-            })
-            .peekable();
+        let mut type_params = generics.params.iter().rev().filter_map(|param| match param.kind {
+            ty::GenericParamDefKind::Lifetime => None,
+            ty::GenericParamDefKind::Type { has_default, .. } => {
+                Some((param.def_id, has_default))
+            }
+        }).peekable();
         let has_default = {
             let has_default = type_params.peek().map(|(_, has_default)| has_default);
             *has_default.unwrap_or(&false)
@@ -677,9 +684,10 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 | (&ty::Infer(ty::InferTy::IntVar(_)), &ty::Infer(ty::InferTy::IntVar(_)))
                 | (&ty::Float(_), &ty::Infer(ty::InferTy::FloatVar(_)))
                 | (&ty::Infer(ty::InferTy::FloatVar(_)), &ty::Float(_))
-                | (&ty::Infer(ty::InferTy::FloatVar(_)), &ty::Infer(ty::InferTy::FloatVar(_))) => {
-                    true
-                }
+                | (
+                    &ty::Infer(ty::InferTy::FloatVar(_)),
+                    &ty::Infer(ty::InferTy::FloatVar(_)),
+                ) => true,
                 _ => false,
             }
         }
@@ -695,7 +703,11 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 "&{}{}{}",
                 r,
                 if r == "" { "" } else { " " },
-                if mutbl == hir::MutMutable { "mut " } else { "" }
+                if mutbl == hir::MutMutable {
+                    "mut "
+                } else {
+                    ""
+                }
             ));
             s.push_normal(ty.to_string());
         }
@@ -726,12 +738,9 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                     let common_len = cmp::min(len1, len2);
                     let remainder1: Vec<_> = sub1.types().skip(common_len).collect();
                     let remainder2: Vec<_> = sub2.types().skip(common_len).collect();
-                    let common_default_params = remainder1
-                        .iter()
-                        .rev()
-                        .zip(remainder2.iter().rev())
-                        .filter(|(a, b)| a == b)
-                        .count();
+                    let common_default_params =
+                        remainder1.iter().rev().zip(remainder2.iter().rev())
+                                               .filter(|(a, b)| a == b).count();
                     let len = sub1.len() - common_default_params;
 
                     // Only draw `<...>` if there're lifetime/type arguments.
@@ -740,7 +749,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                         values.1.push_normal("<");
                     }
 
-                    fn lifetime_display(lifetime: Region<'_>) -> String {
+                    fn lifetime_display(lifetime: Region) -> String {
                         let s = lifetime.to_string();
                         if s.is_empty() {
                             "'_".to_string()
@@ -857,9 +866,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             }
 
             // When encountering &T != &mut T, highlight only the borrow
-            (&ty::Ref(r1, ref_ty1, mutbl1), &ty::Ref(r2, ref_ty2, mutbl2))
-                if equals(&ref_ty1, &ref_ty2) =>
-            {
+            (&ty::Ref(r1, ref_ty1, mutbl1),
+             &ty::Ref(r2, ref_ty2, mutbl2)) if equals(&ref_ty1, &ref_ty2) => {
                 let mut values = (DiagnosticStyledString::new(), DiagnosticStyledString::new());
                 push_ty_ref(&r1, ref_ty1, mutbl1, &mut values.0);
                 push_ty_ref(&r2, ref_ty2, mutbl2, &mut values.1);
@@ -1060,7 +1068,11 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         bound_kind: GenericKind<'tcx>,
         sub: Region<'tcx>,
     ) {
-        self.construct_generic_bound_failure(region_scope_tree, span, origin, bound_kind, sub)
+        self.construct_generic_bound_failure(region_scope_tree,
+                                             span,
+                                             origin,
+                                             bound_kind,
+                                             sub)
             .emit()
     }
 
@@ -1071,7 +1083,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         origin: Option<SubregionOrigin<'tcx>>,
         bound_kind: GenericKind<'tcx>,
         sub: Region<'tcx>,
-    ) -> DiagnosticBuilder<'a> {
+    ) -> DiagnosticBuilder<'a>
+    {
         // Attempt to obtain the span of the parameter so we can
         // suggest adding an explicit lifetime bound to it.
         let type_param_span = match (self.in_progress_tables, bound_kind) {
@@ -1083,7 +1096,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                     // the expected type argument.
                     if !param.is_self() {
                         let type_param = generics.type_param(param, self.tcx);
-                        let hir = &self.tcx.hir();
+                        let hir = &self.tcx.hir;
                         hir.as_local_node_id(type_param.def_id).map(|id| {
                             // Get the `hir::Param` to verify whether it already has any bounds.
                             // We do this to avoid suggesting code that ends up as `T: 'a'b`,
@@ -1148,10 +1161,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 let tail = if has_lifetimes { " + " } else { "" };
                 let suggestion = format!("{}: {}{}", bound_kind, sub, tail);
                 err.span_suggestion_short_with_applicability(
-                    sp,
-                    consider,
-                    suggestion,
-                    Applicability::MaybeIncorrect, // Issue #41966
+                    sp, consider, suggestion,
+                    Applicability::MaybeIncorrect // Issue #41966
                 );
             } else {
                 err.help(consider);
@@ -1315,8 +1326,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 format!(" for lifetime parameter `{}` in coherence check", name)
             }
             infer::UpvarRegion(ref upvar_id, _) => {
-                let var_node_id = self.tcx.hir().hir_to_node_id(upvar_id.var_path.hir_id);
-                let var_name = self.tcx.hir().name(var_node_id);
+                let var_node_id = self.tcx.hir.hir_to_node_id(upvar_id.var_id);
+                let var_name = self.tcx.hir.name(var_node_id);
                 format!(" for capture of `{}` by closure", var_name)
             }
             infer::NLL(..) => bug!("NLL variable found in lexical phase"),
@@ -1347,10 +1358,12 @@ impl<'tcx> ObligationCause<'tcx> {
         match self.code {
             CompareImplMethodObligation { .. } => Error0308("method not compatible with trait"),
             MatchExpressionArm { source, .. } => Error0308(match source {
-                hir::MatchSource::IfLetDesugar { .. } => "`if let` arms have incompatible types",
+                hir::MatchSource::IfLetDesugar { .. } => {
+                    "`if let` arms have incompatible types"
+                },
                 hir::MatchSource::TryDesugar => {
                     "try expression alternatives have incompatible types"
-                }
+                },
                 _ => "match arms have incompatible types",
             }),
             IfExpression => Error0308("if and else have incompatible types"),

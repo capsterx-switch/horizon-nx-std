@@ -10,7 +10,6 @@ crate-type = ["dylib"]
 test = false
 
 [dependencies]
-bitflags = "1.0"
 log = "0.4"
 syntax = { path = "../libsyntax" }
 rustc = { path = "../librustc" }

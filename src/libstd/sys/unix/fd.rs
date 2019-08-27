@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 #![unstable(reason = "not public", issue = "0", feature = "fd")]
 
 use cmp;
@@ -41,12 +31,12 @@ fn max_len() -> usize {
 
 impl FileDesc {
     pub fn new(fd: c_int) -> FileDesc {
-        FileDesc { fd }
+        FileDesc { fd: fd }
     }
 
     pub fn raw(&self) -> c_int { self.fd }
 
-    /// Extracts the actual file descriptor without closing it.
+    /// Extracts the actual filedescriptor without closing it.
     pub fn into_raw(self) -> c_int {
         let fd = self.fd;
         mem::forget(self);

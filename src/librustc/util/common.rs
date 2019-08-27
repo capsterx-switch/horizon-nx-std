@@ -24,11 +24,12 @@ use std::sync::mpsc::{Sender};
 use syntax_pos::{SpanData};
 use ty::TyCtxt;
 use dep_graph::{DepNode};
+use proc_macro;
 use lazy_static;
 use session::Session;
 
 // The name of the associated type for `Fn` return types
-pub const FN_OUTPUT_NAME: &str = "Output";
+pub const FN_OUTPUT_NAME: &'static str = "Output";
 
 // Useful type to use with `Result<>` indicate that an error has already
 // been reported to the user, so no need to continue checking.
@@ -38,21 +39,22 @@ pub struct ErrorReported;
 thread_local!(static TIME_DEPTH: Cell<usize> = Cell::new(0));
 
 lazy_static! {
-    static ref DEFAULT_HOOK: Box<dyn Fn(&panic::PanicInfo<'_>) + Sync + Send + 'static> = {
+    static ref DEFAULT_HOOK: Box<dyn Fn(&panic::PanicInfo) + Sync + Send + 'static> = {
         let hook = panic::take_hook();
         panic::set_hook(Box::new(panic_hook));
         hook
     };
 }
 
-fn panic_hook(info: &panic::PanicInfo<'_>) {
-    (*DEFAULT_HOOK)(info);
+fn panic_hook(info: &panic::PanicInfo) {
+    if !proc_macro::__internal::in_sess() {
+        (*DEFAULT_HOOK)(info);
 
-    let backtrace = env::var_os("RUST_BACKTRACE").map(|x| &x != "0").unwrap_or(false);
+        let backtrace = env::var_os("RUST_BACKTRACE").map(|x| &x != "0").unwrap_or(false);
 
-    if backtrace {
-        TyCtxt::try_print_query_stack();
-    }
+        if backtrace {
+            TyCtxt::try_print_query_stack();
+        }
 
         #[cfg(windows)]
         unsafe {
@@ -64,6 +66,7 @@ fn panic_hook(info: &panic::PanicInfo<'_>) {
                 DebugBreak();
             }
         }
+    }
 }
 
 pub fn install_panic_hook() {
@@ -342,7 +345,7 @@ pub trait MemoizationMap {
     /// If `key` is present in the map, return the value,
     /// otherwise invoke `op` and store the value in the map.
     ///
-    /// N.B., if the receiver is a `DepTrackingMap`, special care is
+    /// NB: if the receiver is a `DepTrackingMap`, special care is
     /// needed in the `op` to ensure that the correct edges are
     /// added into the dep graph. See the `DepTrackingMap` impl for
     /// more details!

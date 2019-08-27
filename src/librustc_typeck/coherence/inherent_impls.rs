@@ -22,6 +22,7 @@ use rustc::hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
 use rustc::hir;
 use rustc::hir::itemlikevisit::ItemLikeVisitor;
 use rustc::ty::{self, CrateInherentImpls, TyCtxt};
+use rustc::util::nodemap::DefIdMap;
 
 use rustc_data_structures::sync::Lrc;
 use syntax::ast;
@@ -30,16 +31,18 @@ use syntax_pos::Span;
 /// On-demand query: yields a map containing all types mapped to their inherent impls.
 pub fn crate_inherent_impls<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                       crate_num: CrateNum)
-                                      -> Lrc<CrateInherentImpls> {
+                                      -> CrateInherentImpls {
     assert_eq!(crate_num, LOCAL_CRATE);
 
-    let krate = tcx.hir().krate();
+    let krate = tcx.hir.krate();
     let mut collect = InherentCollect {
         tcx,
-        impls_map: Default::default(),
+        impls_map: CrateInherentImpls {
+            inherent_impls: DefIdMap()
+        }
     };
     krate.visit_all_item_likes(&mut collect);
-    Lrc::new(collect.impls_map)
+    collect.impls_map
 }
 
 /// On-demand query: yields a vector of the inherent impls for a specific type.
@@ -95,7 +98,7 @@ impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for InherentCollect<'a, 'tcx> {
             _ => return
         };
 
-        let def_id = self.tcx.hir().local_def_id(item.id);
+        let def_id = self.tcx.hir.local_def_id(item.id);
         let self_ty = self.tcx.type_of(def_id);
         let lang_items = self.tcx.lang_items();
         match self_ty.sty {
@@ -105,8 +108,8 @@ impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for InherentCollect<'a, 'tcx> {
             ty::Foreign(did) => {
                 self.check_def_id(item, did);
             }
-            ty::Dynamic(ref data, ..) => {
-                self.check_def_id(item, data.principal().def_id());
+            ty::Dynamic(ref data, ..) if data.principal().is_some() => {
+                self.check_def_id(item, data.principal().unwrap().def_id());
             }
             ty::Char => {
                 self.check_primitive_impl(def_id,
@@ -298,7 +301,7 @@ impl<'a, 'tcx> InherentCollect<'a, 'tcx> {
             // Add the implementation to the mapping from implementation to base
             // type def ID, if there is a base type for this implementation and
             // the implementation does not have any associated traits.
-            let impl_def_id = self.tcx.hir().local_def_id(item.id);
+            let impl_def_id = self.tcx.hir.local_def_id(item.id);
             let mut rc_vec = self.impls_map.inherent_impls
                                            .entry(def_id)
                                            .or_default();
@@ -312,7 +315,8 @@ impl<'a, 'tcx> InherentCollect<'a, 'tcx> {
                              E0116,
                              "cannot define inherent `impl` for a type outside of the crate \
                               where the type is defined")
-                .span_label(item.span, "impl for type defined outside of crate.")
+                .span_label(item.span,
+                            "impl for type defined outside of crate.")
                 .note("define and implement a trait or new type instead")
                 .emit();
         }

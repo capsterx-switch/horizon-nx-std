@@ -10,7 +10,7 @@
 
 use infer::at::At;
 use infer::InferOk;
-use infer::canonical::OriginalQueryValues;
+use smallvec::SmallVec;
 use std::iter::FromIterator;
 use syntax::source_map::Span;
 use ty::subst::Kind;
@@ -51,14 +51,14 @@ impl<'cx, 'gcx, 'tcx> At<'cx, 'gcx, 'tcx> {
         }
 
         let gcx = tcx.global_tcx();
-        let mut orig_values = OriginalQueryValues::default();
+        let mut orig_values = SmallVec::new();
         let c_ty = self.infcx.canonicalize_query(&self.param_env.and(ty), &mut orig_values);
         let span = self.cause.span;
         debug!("c_ty = {:?}", c_ty);
         match &gcx.dropck_outlives(c_ty) {
             Ok(result) if result.is_proven() => {
                 if let Ok(InferOk { value, obligations }) =
-                    self.infcx.instantiate_query_response_and_region_obligations(
+                    self.infcx.instantiate_query_result_and_region_obligations(
                     self.cause,
                     self.param_env,
                     &orig_values,
@@ -200,7 +200,7 @@ impl_stable_hash_for!(struct DtorckConstraint<'tcx> {
 /// trivial for dropck-outlives.
 ///
 /// Note also that `needs_drop` requires a "global" type (i.e., one
-/// with erased regions), but this function does not.
+/// with erased regions), but this funtcion does not.
 pub fn trivial_dropck_outlives<'tcx>(tcx: TyCtxt<'_, '_, 'tcx>, ty: Ty<'tcx>) -> bool {
     match ty.sty {
         // None of these types have a destructor and hence they do not
@@ -251,11 +251,7 @@ pub fn trivial_dropck_outlives<'tcx>(tcx: TyCtxt<'_, '_, 'tcx>, ty: Ty<'tcx>) ->
         | ty::Projection(..)
         | ty::Param(_)
         | ty::Opaque(..)
-        | ty::Placeholder(..)
         | ty::Infer(_)
-        | ty::Bound(..)
         | ty::Generator(..) => false,
-
-        ty::UnnormalizedProjection(..) => bug!("only used with chalk-engine"),
     }
 }

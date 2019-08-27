@@ -92,7 +92,7 @@ pub fn encode_with_shorthand<E, T, M>(encoder: &mut E,
     let leb128_bits = len * 7;
 
     // Check that the shorthand is a not longer than the
-    // full encoding itself, i.e., it's an obvious win.
+    // full encoding itself, i.e. it's an obvious win.
     if leb128_bits >= 64 || (shorthand as u64) < (1 << leb128_bits) {
         cache(encoder).insert(value.clone(), shorthand);
     }
@@ -109,9 +109,8 @@ pub fn encode_predicates<'tcx, E, C>(encoder: &mut E,
 {
     predicates.parent.encode(encoder)?;
     predicates.predicates.len().encode(encoder)?;
-    for (predicate, span) in &predicates.predicates {
-        encode_with_shorthand(encoder, predicate, &cache)?;
-        span.encode(encoder)?;
+    for predicate in &predicates.predicates {
+        encode_with_shorthand(encoder, predicate, &cache)?
     }
     Ok(())
 }
@@ -178,19 +177,18 @@ pub fn decode_predicates<'a, 'tcx, D>(decoder: &mut D)
     Ok(ty::GenericPredicates {
         parent: Decodable::decode(decoder)?,
         predicates: (0..decoder.read_usize()?).map(|_| {
-            // Handle shorthands first, if we have an usize > 0x80.
-            let predicate = if decoder.positioned_at_shorthand() {
-                let pos = decoder.read_usize()?;
-                assert!(pos >= SHORTHAND_OFFSET);
-                let shorthand = pos - SHORTHAND_OFFSET;
+                // Handle shorthands first, if we have an usize > 0x80.
+                if decoder.positioned_at_shorthand() {
+                    let pos = decoder.read_usize()?;
+                    assert!(pos >= SHORTHAND_OFFSET);
+                    let shorthand = pos - SHORTHAND_OFFSET;
 
-                decoder.with_position(shorthand, ty::Predicate::decode)
-            } else {
-                ty::Predicate::decode(decoder)
-            }?;
-            Ok((predicate, Decodable::decode(decoder)?))
-        })
-        .collect::<Result<Vec<_>, _>>()?,
+                    decoder.with_position(shorthand, ty::Predicate::decode)
+                } else {
+                    ty::Predicate::decode(decoder)
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?,
     })
 }
 
@@ -267,7 +265,7 @@ pub fn decode_const<'a, 'tcx, D>(decoder: &mut D)
 
 #[inline]
 pub fn decode_allocation<'a, 'tcx, D>(decoder: &mut D)
-    -> Result<&'tcx Allocation, D::Error>
+                                 -> Result<&'tcx Allocation, D::Error>
     where D: TyDecoder<'a, 'tcx>,
           'tcx: 'a,
 {
@@ -320,7 +318,7 @@ macro_rules! implement_ty_decoder {
                     read_f64 -> f64;
                     read_f32 -> f32;
                     read_char -> char;
-                    read_str -> Cow<'_, str>;
+                    read_str -> Cow<str>;
                 }
 
                 fn error(&mut self, err: &str) -> Self::Error {
@@ -417,3 +415,4 @@ macro_rules! implement_ty_decoder {
         }
     }
 }
+

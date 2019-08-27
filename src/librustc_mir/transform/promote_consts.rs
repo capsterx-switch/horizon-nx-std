@@ -23,7 +23,7 @@
 //! move analysis runs after promotion on broken MIR.
 
 use rustc::mir::*;
-use rustc::mir::visit::{PlaceContext, MutatingUseContext, MutVisitor, Visitor};
+use rustc::mir::visit::{PlaceContext, MutVisitor, Visitor};
 use rustc::mir::traversal::ReversePostorder;
 use rustc::ty::TyCtxt;
 use syntax_pos::Span;
@@ -53,7 +53,6 @@ pub enum TempState {
 
 impl TempState {
     pub fn is_promotable(&self) -> bool {
-        debug!("is_promotable: self={:?}", self);
         if let TempState::Defined { uses, .. } = *self {
             uses > 0
         } else {
@@ -89,7 +88,6 @@ impl<'tcx> Visitor<'tcx> for TempCollector<'tcx> {
                    &index: &Local,
                    context: PlaceContext<'tcx>,
                    location: Location) {
-        debug!("visit_local: index={:?} context={:?} location={:?}", index, context, location);
         // We're only interested in temporaries
         if self.mir.local_kind(index) != LocalKind::Temp {
             return;
@@ -97,22 +95,17 @@ impl<'tcx> Visitor<'tcx> for TempCollector<'tcx> {
 
         // Ignore drops, if the temp gets promoted,
         // then it's constant and thus drop is noop.
-        // Non-uses are also irrelevent.
-        if context.is_drop() || !context.is_use() {
-            debug!(
-                "visit_local: context.is_drop={:?} context.is_use={:?}",
-                context.is_drop(), context.is_use(),
-            );
+        // Storage live ranges are also irrelevant.
+        if context.is_drop() || context.is_storage_marker() {
             return;
         }
 
         let temp = &mut self.temps[index];
-        debug!("visit_local: temp={:?}", temp);
         if *temp == TempState::Undefined {
             match context {
-                PlaceContext::MutatingUse(MutatingUseContext::Store) |
-                PlaceContext::MutatingUse(MutatingUseContext::AsmOutput) |
-                PlaceContext::MutatingUse(MutatingUseContext::Call) => {
+                PlaceContext::Store |
+                PlaceContext::AsmOutput |
+                PlaceContext::Call => {
                     *temp = TempState::Defined {
                         location,
                         uses: 0
@@ -123,9 +116,11 @@ impl<'tcx> Visitor<'tcx> for TempCollector<'tcx> {
             }
         } else if let TempState::Defined { ref mut uses, .. } = *temp {
             // We always allow borrows, even mutable ones, as we need
-            // to promote mutable borrows of some ZSTs e.g., `&mut []`.
-            let allowed_use = context.is_borrow() || context.is_nonmutating_use();
-            debug!("visit_local: allowed_use={:?}", allowed_use);
+            // to promote mutable borrows of some ZSTs e.g. `&mut []`.
+            let allowed_use = match context {
+                PlaceContext::Borrow {..} => true,
+                _ => context.is_nonmutating_use()
+            };
             if allowed_use {
                 *uses += 1;
                 return;
@@ -187,7 +182,7 @@ impl<'a, 'tcx> Promoter<'a, 'tcx> {
                 span,
                 scope: OUTERMOST_SOURCE_SCOPE
             },
-            kind: StatementKind::Assign(Place::Local(dest), box rvalue)
+            kind: StatementKind::Assign(Place::Local(dest), rvalue)
         });
     }
 
@@ -222,7 +217,7 @@ impl<'a, 'tcx> Promoter<'a, 'tcx> {
         // First, take the Rvalue or Call out of the source MIR,
         // or duplicate it, depending on keep_original.
         if loc.statement_index < no_stmts {
-            let (rvalue, source_info) = {
+            let (mut rvalue, source_info) = {
                 let statement = &mut self.source[loc.block].statements[loc.statement_index];
                 let rhs = match statement.kind {
                     StatementKind::Assign(_, ref mut rhs) => rhs,
@@ -235,12 +230,11 @@ impl<'a, 'tcx> Promoter<'a, 'tcx> {
                 (if self.keep_original {
                     rhs.clone()
                 } else {
-                    let unit = box Rvalue::Aggregate(box AggregateKind::Tuple, vec![]);
+                    let unit = Rvalue::Aggregate(box AggregateKind::Tuple, vec![]);
                     mem::replace(rhs, unit)
                 }, statement.source_info)
             };
 
-            let mut rvalue = *rvalue;
             self.visit_rvalue(&mut rvalue, loc);
             self.assign(new_temp, rvalue, source_info.span);
         } else {
@@ -263,7 +257,7 @@ impl<'a, 'tcx> Promoter<'a, 'tcx> {
             };
 
             match terminator.kind {
-                TerminatorKind::Call { mut func, mut args, from_hir_call, .. } => {
+                TerminatorKind::Call { mut func, mut args, .. } => {
                     self.visit_operand(&mut func, loc);
                     for arg in &mut args {
                         self.visit_operand(arg, loc);
@@ -277,8 +271,7 @@ impl<'a, 'tcx> Promoter<'a, 'tcx> {
                             func,
                             args,
                             cleanup: None,
-                            destination: Some((Place::Local(new_temp), new_target)),
-                            from_hir_call,
+                            destination: Some((Place::Local(new_temp), new_target))
                         },
                         ..terminator
                     };
@@ -308,13 +301,18 @@ impl<'a, 'tcx> Promoter<'a, 'tcx> {
                 Candidate::Ref(loc) => {
                     let ref mut statement = blocks[loc.block].statements[loc.statement_index];
                     match statement.kind {
-                        StatementKind::Assign(_, box Rvalue::Ref(_, _, ref mut place)) => {
+                        StatementKind::Assign(_, Rvalue::Ref(_, _, ref mut place)) => {
                             // Find the underlying local for this (necessarily interior) borrow.
-                            let mut place = place;
-                            while let Place::Projection(ref mut proj) = *place {
-                                assert_ne!(proj.elem, ProjectionElem::Deref);
-                                place = &mut proj.base;
-                            };
+                            // HACK(eddyb) using a recursive function because of mutable borrows.
+                            fn interior_base<'a, 'tcx>(place: &'a mut Place<'tcx>)
+                                                       -> &'a mut Place<'tcx> {
+                                if let Place::Projection(ref mut proj) = *place {
+                                    assert_ne!(proj.elem, ProjectionElem::Deref);
+                                    return interior_base(&mut proj.base);
+                                }
+                                place
+                            }
+                            let place = interior_base(place);
 
                             let ty = place.ty(local_decls, self.tcx).to_ty(self.tcx);
                             let span = statement.source_info.span;
@@ -333,14 +331,6 @@ impl<'a, 'tcx> Promoter<'a, 'tcx> {
                             let operand = Operand::Copy(promoted_place(ty, span));
                             mem::replace(&mut args[index], operand)
                         }
-                        // We expected a `TerminatorKind::Call` for which we'd like to promote an
-                        // argument. `qualify_consts` saw a `TerminatorKind::Call` here, but
-                        // we are seeing a `Goto`. That means that the `promote_temps` method
-                        // already promoted this call away entirely. This case occurs when calling
-                        // a function requiring a constant argument and as that constant value
-                        // providing a value whose computation contains another call to a function
-                        // requiring a constant argument.
-                        TerminatorKind::Goto { .. } => return,
                         _ => bug!()
                     }
                 }

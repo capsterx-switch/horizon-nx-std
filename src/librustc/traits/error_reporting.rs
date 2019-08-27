@@ -34,6 +34,7 @@ use hir::def_id::DefId;
 use infer::{self, InferCtxt};
 use infer::type_variable::TypeVariableOrigin;
 use std::fmt;
+use std::iter;
 use syntax::ast;
 use session::DiagnosticMessageId;
 use ty::{self, AdtKind, ToPredicate, ToPolyTraitRef, Ty, TyCtxt, TypeFoldable};
@@ -45,7 +46,7 @@ use ty::subst::Subst;
 use ty::SubtypePredicate;
 use util::nodemap::{FxHashMap, FxHashSet};
 
-use syntax_pos::{DUMMY_SP, Span, ExpnInfo, ExpnFormat};
+use syntax_pos::{DUMMY_SP, Span};
 
 impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     pub fn report_fulfillment_errors(&self,
@@ -67,30 +68,18 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             }).collect();
 
         for (index, error) in errors.iter().enumerate() {
-            // We want to ignore desugarings here: spans are equivalent even
-            // if one is the result of a desugaring and the other is not.
-            let mut span = error.obligation.cause.span;
-            if let Some(ExpnInfo {
-                format: ExpnFormat::CompilerDesugaring(_),
-                def_site: Some(def_span),
-                ..
-            }) = span.ctxt().outer().expn_info() {
-                span = def_span;
-            }
-
-            error_map.entry(span).or_default().push(
+            error_map.entry(error.obligation.cause.span).or_default().push(
                 ErrorDescriptor {
                     predicate: error.obligation.predicate.clone(),
                     index: Some(index)
-                }
-            );
+                });
 
             self.reported_trait_errors.borrow_mut()
-                .entry(span).or_default()
+                .entry(error.obligation.cause.span).or_default()
                 .push(error.obligation.predicate.clone());
         }
 
-        // We do this in 2 passes because we want to display errors in order, though
+        // We do this in 2 passes because we want to display errors in order, tho
         // maybe it *is* better to sort errors by span or something.
         let mut is_suppressed = vec![false; errors.len()];
         for (_, error_set) in error_map.iter() {
@@ -128,7 +117,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
-    // returns if `cond` not occurring implies that `error` does not occur - i.e., that
+    // returns if `cond` not occurring implies that `error` does not occur - i.e. that
     // `error` occurring implies that `cond` occurs.
     fn error_implies(&self,
                      cond: &ty::Predicate<'tcx>,
@@ -212,11 +201,10 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             // cause I have no idea for a good error message.
             if let ty::Predicate::Projection(ref data) = predicate {
                 let mut selcx = SelectionContext::new(self);
-                let (data, _) = self.replace_bound_vars_with_fresh_vars(
+                let (data, _) = self.replace_late_bound_regions_with_fresh_var(
                     obligation.cause.span,
                     infer::LateBoundRegionConversionTime::HigherRankedType,
-                    data
-                );
+                    data);
                 let mut obligations = vec![];
                 let normalized_ty = super::normalize_projection_type(
                     &mut selcx,
@@ -239,7 +227,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
             let msg = format!("type mismatch resolving `{}`", predicate);
             let error_id = (DiagnosticMessageId::ErrorId(271),
-                            Some(obligation.cause.span), msg);
+                            Some(obligation.cause.span), msg.clone());
             let fresh = self.tcx.sess.one_time_diagnostics.borrow_mut().insert(error_id);
             if fresh {
                 let mut diag = struct_span_err!(
@@ -281,8 +269,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 ty::Generator(..) => Some(18),
                 ty::Foreign(..) => Some(19),
                 ty::GeneratorWitness(..) => Some(20),
-                ty::Placeholder(..) | ty::Bound(..) | ty::Infer(..) | ty::Error => None,
-                ty::UnnormalizedProjection(..) => bug!("only used with chalk-engine"),
+                ty::Infer(..) | ty::Error => None
             }
         }
 
@@ -349,10 +336,11 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     fn on_unimplemented_note(
         &self,
         trait_ref: ty::PolyTraitRef<'tcx>,
-        obligation: &PredicateObligation<'tcx>,
-    ) -> OnUnimplementedNote {
+        obligation: &PredicateObligation<'tcx>) ->
+        OnUnimplementedNote
+    {
         let def_id = self.impl_similar_to(trait_ref, obligation)
-            .unwrap_or_else(|| trait_ref.def_id());
+            .unwrap_or(trait_ref.def_id());
         let trait_ref = *trait_ref.skip_binder();
 
         let mut flags = vec![];
@@ -377,9 +365,6 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 flags.push(("from_method".to_owned(), None));
                 flags.push(("from_method".to_owned(), Some(method.to_string())));
             }
-        }
-        if let Some(t) = self.get_parent_trait_ref(&obligation.cause.code) {
-            flags.push(("parent_trait".to_owned(), Some(t)));
         }
 
         if let Some(k) = obligation.cause.span.compiler_desugaring_kind() {
@@ -410,38 +395,6 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
         if let Some(true) = self_ty.ty_adt_def().map(|def| def.did.is_local()) {
             flags.push(("crate_local".to_owned(), None));
-        }
-
-        // Allow targeting all integers using `{integral}`, even if the exact type was resolved
-        if self_ty.is_integral() {
-            flags.push(("_Self".to_owned(), Some("{integral}".to_owned())));
-        }
-
-        if let ty::Array(aty, len) = self_ty.sty {
-            flags.push(("_Self".to_owned(), Some("[]".to_owned())));
-            flags.push(("_Self".to_owned(), Some(format!("[{}]", aty))));
-            if let Some(def) = aty.ty_adt_def() {
-                // We also want to be able to select the array's type's original
-                // signature with no type arguments resolved
-                flags.push((
-                    "_Self".to_owned(),
-                    Some(format!("[{}]", self.tcx.type_of(def.did).to_string())),
-                ));
-                let tcx = self.tcx;
-                if let Some(len) = len.val.try_to_scalar().and_then(|scalar| {
-                    scalar.to_usize(&tcx).ok()
-                }) {
-                    flags.push((
-                        "_Self".to_owned(),
-                        Some(format!("[{}; {}]", self.tcx.type_of(def.did).to_string(), len)),
-                    ));
-                } else {
-                    flags.push((
-                        "_Self".to_owned(),
-                        Some(format!("[{}; _]", self.tcx.type_of(def.did).to_string())),
-                    ));
-                }
-            }
         }
 
         if let Ok(Some(command)) = OnUnimplementedDirective::of_item(
@@ -484,7 +437,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
     fn report_similar_impl_candidates(&self,
                                       mut impl_candidates: Vec<ty::TraitRef<'tcx>>,
-                                      err: &mut DiagnosticBuilder<'_>)
+                                      err: &mut DiagnosticBuilder)
     {
         if impl_candidates.is_empty() {
             return;
@@ -580,7 +533,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
         let mut err = struct_span_err!(self.tcx.sess, sp, E0276, "{}", msg);
 
-        if let Some(trait_item_span) = self.tcx.hir().span_if_local(trait_item_def_id) {
+        if let Some(trait_item_span) = self.tcx.hir.span_if_local(trait_item_def_id) {
             let span = self.tcx.sess.source_map().def_span(trait_item_span);
             err.span_label(span, format!("definition of `{}` from trait", item_name));
         }
@@ -639,7 +592,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                         let (post_message, pre_message) =
                             self.get_parent_trait_ref(&obligation.cause.code)
                                 .map(|t| (format!(" in `{}`", t), format!("within `{}`, ", t)))
-                            .unwrap_or_default();
+                            .unwrap_or((String::new(), String::new()));
 
                         let OnUnimplementedNote { message, label, note }
                             = self.on_unimplemented_note(trait_ref, obligation);
@@ -755,8 +708,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                     }
 
                     ty::Predicate::ObjectSafe(trait_def_id) => {
-                        let violations = self.tcx.global_tcx()
-                            .object_safety_violations(trait_def_id);
+                        let violations = self.tcx.object_safety_violations(trait_def_id);
                         self.tcx.report_object_safety_error(span,
                                                             trait_def_id,
                                                             violations)
@@ -765,8 +717,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                     ty::Predicate::ClosureKind(closure_def_id, closure_substs, kind) => {
                         let found_kind = self.closure_kind(closure_def_id, closure_substs).unwrap();
                         let closure_span = self.tcx.sess.source_map()
-                            .def_span(self.tcx.hir().span_if_local(closure_def_id).unwrap());
-                        let node_id = self.tcx.hir().as_local_node_id(closure_def_id).unwrap();
+                            .def_span(self.tcx.hir.span_if_local(closure_def_id).unwrap());
+                        let node_id = self.tcx.hir.as_local_node_id(closure_def_id).unwrap();
                         let mut err = struct_span_err!(
                             self.tcx.sess, closure_span, E0525,
                             "expected a closure that implements the `{}` trait, \
@@ -785,7 +737,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                         // a particular trait.
                         if let Some(tables) = self.in_progress_tables {
                             let tables = tables.borrow();
-                            let closure_hir_id = self.tcx.hir().node_to_hir_id(node_id);
+                            let closure_hir_id = self.tcx.hir.node_to_hir_id(node_id);
                             match (found_kind, tables.closure_kind_origins().get(closure_hir_id)) {
                                 (ty::ClosureKind::FnOnce, Some((span, name))) => {
                                     err.span_label(*span, format!(
@@ -841,7 +793,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 };
 
                 let found_span = found_did.and_then(|did|
-                    self.tcx.hir().span_if_local(did)
+                    self.tcx.hir.span_if_local(did)
                 ).map(|sp| self.tcx.sess.source_map().def_span(sp)); // the sp could be an fn def
 
                 let found = match found_trait_ref.skip_binder().substs.type_at(1).sty {
@@ -862,7 +814,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                                                      expected_trait_ref)
                 } else {
                     let (closure_span, found) = found_did
-                        .and_then(|did| self.tcx.hir().get_if_local(did))
+                        .and_then(|did| self.tcx.hir.get_if_local(did))
                         .map(|node| {
                             let (found_span, found) = self.get_fn_like_arguments(node);
                             (Some(found_span), found)
@@ -877,14 +829,22 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             }
 
             TraitNotObjectSafe(did) => {
-                let violations = self.tcx.global_tcx().object_safety_violations(did);
+                let violations = self.tcx.object_safety_violations(did);
                 self.tcx.report_object_safety_error(span, did, violations)
             }
 
-            // already reported in the query
-            ConstEvalFailure(_) => {
-                self.tcx.sess.delay_span_bug(span, "constant in type had an ignored error");
-                return;
+            ConstEvalFailure(ref err) => {
+                match err.struct_error(
+                    self.tcx.at(span),
+                    "could not evaluate constant expression",
+                ) {
+                    Some(err) => err,
+                    None => {
+                        self.tcx.sess.delay_span_bug(span,
+                            &format!("constant in type had an ignored error: {:?}", err));
+                        return;
+                    }
+                }
             }
 
             Overflow => {
@@ -901,8 +861,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                                        code: &ObligationCauseCode<'tcx>,
                                        err: &mut DiagnosticBuilder<'tcx>) {
         if let &ObligationCauseCode::VariableType(node_id) = code {
-            let parent_node = self.tcx.hir().get_parent_node(node_id);
-            if let Some(Node::Local(ref local)) = self.tcx.hir().find(parent_node) {
+            let parent_node = self.tcx.hir.get_parent_node(node_id);
+            if let Some(Node::Local(ref local)) = self.tcx.hir.find(parent_node) {
                 if let Some(ref expr) = local.init {
                     if let hir::ExprKind::Index(_, _) = expr.node {
                         if let Ok(snippet) = self.tcx.sess.source_map().span_to_snippet(expr.span) {
@@ -970,13 +930,13 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     /// returns a span and `ArgKind` information that describes the
     /// arguments it expects. This can be supplied to
     /// `report_arg_count_mismatch`.
-    pub fn get_fn_like_arguments(&self, node: Node<'_>) -> (Span, Vec<ArgKind>) {
+    pub fn get_fn_like_arguments(&self, node: Node) -> (Span, Vec<ArgKind>) {
         match node {
             Node::Expr(&hir::Expr {
                 node: hir::ExprKind::Closure(_, ref _decl, id, span, _),
                 ..
             }) => {
-                (self.tcx.sess.source_map().def_span(span), self.tcx.hir().body(id).arguments.iter()
+                (self.tcx.sess.source_map().def_span(span), self.tcx.hir.body(id).arguments.iter()
                     .map(|arg| {
                         if let hir::Pat {
                             node: hir::PatKind::Tuple(args, _),
@@ -1037,7 +997,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                  ).collect::<Vec<_>>())
             }
             Node::StructCtor(ref variant_data) => {
-                (self.tcx.sess.source_map().def_span(self.tcx.hir().span(variant_data.id())),
+                (self.tcx.sess.source_map().def_span(self.tcx.hir.span(variant_data.id())),
                  vec![ArgKind::empty(); variant_data.fields().len()])
             }
             _ => panic!("non-FnLike node found: {:?}", node),
@@ -1092,27 +1052,16 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         if let Some(found_span) = found_span {
             err.span_label(found_span, format!("takes {}", found_str));
 
-            // move |_| { ... }
-            // ^^^^^^^^-- def_span
-            //
-            // move |_| { ... }
-            // ^^^^^-- prefix
-            let prefix_span = self.tcx.sess.source_map().span_until_non_whitespace(found_span);
-            // move |_| { ... }
-            //      ^^^-- pipe_span
-            let pipe_span = if let Some(span) = found_span.trim_start(prefix_span) {
-                span
-            } else {
-                found_span
-            };
-
             // Suggest to take and ignore the arguments with expected_args_length `_`s if
             // found arguments is empty (assume the user just wants to ignore args in this case).
             // For example, if `expected_args_length` is 2, suggest `|_, _|`.
             if found_args.is_empty() && is_closure {
-                let underscores = vec!["_"; expected_args.len()].join(", ");
+                let underscores = iter::repeat("_")
+                                      .take(expected_args.len())
+                                      .collect::<Vec<_>>()
+                                      .join(", ");
                 err.span_suggestion_with_applicability(
-                    pipe_span,
+                    found_span,
                     &format!(
                         "consider changing the closure to take and ignore the expected argument{}",
                         if expected_args.len() < 2 {
@@ -1236,7 +1185,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                                                    -> DiagnosticBuilder<'tcx>
     {
         assert!(type_def_id.is_local());
-        let span = self.hir().span_if_local(type_def_id).unwrap();
+        let span = self.hir.span_if_local(type_def_id).unwrap();
         let span = self.sess.source_map().def_span(span);
         let mut err = struct_span_err!(self.sess, span, E0072,
                                        "recursive type `{}` has infinite size",
@@ -1262,7 +1211,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             trait_str);
         err.span_label(span, format!("the trait `{}` cannot be made into an object", trait_str));
 
-        let mut reported_violations = FxHashSet::default();
+        let mut reported_violations = FxHashSet();
         for violation in violations {
             if reported_violations.insert(violation.clone()) {
                 err.note(&violation.error_msg());
@@ -1408,7 +1357,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
             let cleaned_pred = pred.fold_with(&mut ParamToVarFolder {
                 infcx: self,
-                var_map: Default::default()
+                var_map: FxHashMap()
             });
 
             let cleaned_pred = super::project::normalize(
@@ -1429,7 +1378,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     }
 
     fn note_obligation_cause<T>(&self,
-                                err: &mut DiagnosticBuilder<'_>,
+                                err: &mut DiagnosticBuilder,
                                 obligation: &Obligation<'tcx, T>)
         where T: fmt::Display
     {
@@ -1440,7 +1389,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     }
 
     fn note_obligation_cause_code<T>(&self,
-                                     err: &mut DiagnosticBuilder<'_>,
+                                     err: &mut DiagnosticBuilder,
                                      predicate: &T,
                                      cause_code: &ObligationCauseCode<'tcx>,
                                      obligated_types: &mut Vec<&ty::TyS<'tcx>>)
@@ -1482,7 +1431,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 let item_name = tcx.item_path_str(item_def_id);
                 let msg = format!("required by `{}`", item_name);
 
-                if let Some(sp) = tcx.hir().span_if_local(item_def_id) {
+                if let Some(sp) = tcx.hir.span_if_local(item_def_id) {
                     let sp = tcx.sess.source_map().def_span(sp);
                     err.span_note(sp, &msg);
                 } else {
@@ -1596,7 +1545,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
-    fn suggest_new_overflow_limit(&self, err: &mut DiagnosticBuilder<'_>) {
+    fn suggest_new_overflow_limit(&self, err: &mut DiagnosticBuilder) {
         let current_limit = self.tcx.sess.recursion_limit.get();
         let suggested_limit = current_limit * 2;
         err.help(&format!("consider adding a `#![recursion_limit=\"{}\"]` attribute to your crate",

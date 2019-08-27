@@ -1,13 +1,3 @@
-// Copyright 2014-2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Thread local storage
 
 #![unstable(feature = "thread_local_internals", issue = "0")]
@@ -173,22 +163,16 @@ macro_rules! __thread_local_inner {
                 &'static $crate::cell::UnsafeCell<
                     $crate::option::Option<$t>>>
             {
-                #[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+                #[cfg(target_arch = "wasm32")]
                 static __KEY: $crate::thread::__StaticLocalKeyInner<$t> =
                     $crate::thread::__StaticLocalKeyInner::new();
 
                 #[thread_local]
-                #[cfg(all(
-                    target_thread_local,
-                    not(all(target_arch = "wasm32", not(target_feature = "atomics"))),
-                ))]
+                #[cfg(all(target_thread_local, not(target_arch = "wasm32")))]
                 static __KEY: $crate::thread::__FastLocalKeyInner<$t> =
                     $crate::thread::__FastLocalKeyInner::new();
 
-                #[cfg(all(
-                    not(target_thread_local),
-                    not(all(target_arch = "wasm32", not(target_feature = "atomics"))),
-                ))]
+                #[cfg(all(not(target_thread_local), not(target_arch = "wasm32")))]
                 static __KEY: $crate::thread::__OsLocalKeyInner<$t> =
                     $crate::thread::__OsLocalKeyInner::new();
 
@@ -257,10 +241,12 @@ impl<T: 'static> LocalKey<T> {
     }
 
     unsafe fn init(&self, slot: &UnsafeCell<Option<T>>) -> &T {
+        use mem;
+        use ptr;
         // Execute the initialization up front, *then* move it into our slot,
         // just in case initialization fails.
         let value = (self.init)();
-        let ptr = slot.get();
+        let sltptr = slot.get();
 
         // note that this can in theory just be `*ptr = Some(value)`, but due to
         // the compiler will currently codegen that pattern with something like:
@@ -274,14 +260,27 @@ impl<T: 'static> LocalKey<T> {
         // value (an aliasing violation). To avoid setting the "I'm running a
         // destructor" flag we just use `mem::replace` which should sequence the
         // operations a little differently and make this safe to call.
-        mem::replace(&mut *ptr, Some(value));
+        let wrapped = Some(value);
+        let sz = mem::size_of_val(&wrapped);
+        
+        let wrapped_ptr = &wrapped as *const _ as *const u8;
+        for idx in 0..sz {
+            let byte : u8 = *wrapped_ptr.offset(idx as isize);
+        }
+        for idx in 0..sz {
+            let byte : u8 = *wrapped_ptr.offset(idx as isize);
+            ptr::write((sltptr as *mut u8).offset(idx as isize), byte);
+        }
+        for idx in 0..sz {
+            let byte : u8 = *(sltptr as *mut u8).offset(idx as isize);
+        }
 
         // After storing `Some` we want to get a reference to the contents of
         // what we just stored. While we could use `unwrap` here and it should
         // always work it empirically doesn't seem to always get optimized away,
         // which means that using something like `try_with` can pull in
         // panicking code and cause a large size bloat.
-        match *ptr {
+        match *sltptr {
             Some(ref x) => x,
             None => hint::unreachable_unchecked(),
         }
@@ -302,14 +301,30 @@ impl<T: 'static> LocalKey<T> {
     where
         F: FnOnce(&T) -> R,
     {
+        use intrinsics::type_name;
         unsafe {
-            let slot = (self.inner)().ok_or(AccessError {
+            let slot_res = (self.inner)().ok_or(AccessError {
                 _private: (),
-            })?;
-            Ok(f(match *slot.get() {
-                Some(ref inner) => inner,
-                None => self.init(slot),
-            }))
+            });
+            let slot : &UnsafeCell<Option<T>>= match slot_res {
+                Ok(sl) => sl, 
+                Err(e) => {
+                    return Err(e);
+                }
+            };
+
+            let slot_ptr : *mut Option<T> = slot.get();
+            let slot_opt_vl : Option<T> = slot_ptr.read();
+            let slot_vl = match slot_opt_vl {
+                Some(ref inner) => {
+                    inner
+                },
+                None => {
+                    self.init(slot)
+                }
+            };
+            let res = f(slot_vl);
+            Ok(res)
         }
     }
 }
@@ -317,7 +332,7 @@ impl<T: 'static> LocalKey<T> {
 /// On some platforms like wasm32 there's no threads, so no need to generate
 /// thread locals and we can instead just use plain statics!
 #[doc(hidden)]
-#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+#[cfg(target_arch = "wasm32")]
 pub mod statik {
     use cell::UnsafeCell;
     use fmt;

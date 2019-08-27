@@ -96,8 +96,9 @@ pub type Result = result::Result<(), Error>;
 /// use std::fmt::{self, write};
 ///
 /// let mut output = String::new();
-/// if let Err(fmt::Error) = write(&mut output, format_args!("Hello {}!", "world")) {
-///     panic!("An error occurred");
+/// match write(&mut output, format_args!("Hello {}!", "world")) {
+///     Err(fmt::Error) => panic!("An error occurred"),
+///     _ => (),
 /// }
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -207,7 +208,7 @@ pub trait Write {
         // requiring a `Sized` bound.
         struct Adapter<'a,T: ?Sized +'a>(&'a mut T);
 
-        impl<T: ?Sized> Write for Adapter<'_, T>
+        impl<'a, T: ?Sized> Write for Adapter<'a, T>
             where T: Write
         {
             fn write_str(&mut self, s: &str) -> Result {
@@ -228,7 +229,7 @@ pub trait Write {
 }
 
 #[stable(feature = "fmt_write_blanket_impl", since = "1.4.0")]
-impl<W: Write + ?Sized> Write for &mut W {
+impl<'a, W: Write + ?Sized> Write for &'a mut W {
     fn write_str(&mut self, s: &str) -> Result {
         (**self).write_str(s)
     }
@@ -290,8 +291,8 @@ pub struct ArgumentV1<'a> {
 
 #[unstable(feature = "fmt_internals", reason = "internal to format_args!",
            issue = "0")]
-impl Clone for ArgumentV1<'_> {
-    fn clone(&self) -> Self {
+impl<'a> Clone for ArgumentV1<'a> {
+    fn clone(&self) -> ArgumentV1<'a> {
         *self
     }
 }
@@ -435,14 +436,14 @@ pub struct Arguments<'a> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl Debug for Arguments<'_> {
+impl<'a> Debug for Arguments<'a> {
     fn fmt(&self, fmt: &mut Formatter) -> Result {
         Display::fmt(self, fmt)
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl Display for Arguments<'_> {
+impl<'a> Display for Arguments<'a> {
     fn fmt(&self, fmt: &mut Formatter) -> Result {
         write(fmt.buf, *self)
     }
@@ -1381,7 +1382,7 @@ impl<'a> Formatter<'a> {
         for part in formatted.parts {
             match *part {
                 flt2dec::Part::Zero(mut nzeroes) => {
-                    const ZEROES: &str = // 64 zeroes
+                    const ZEROES: &'static str = // 64 zeroes
                         "0000000000000000000000000000000000000000000000000000000000000000";
                     while nzeroes > ZEROES.len() {
                         self.buf.write_str(ZEROES)?;
@@ -1883,7 +1884,7 @@ impl<'a> Formatter<'a> {
 }
 
 #[stable(since = "1.2.0", feature = "formatter_write")]
-impl Write for Formatter<'_> {
+impl<'a> Write for Formatter<'a> {
     fn write_str(&mut self, s: &str) -> Result {
         self.buf.write_str(s)
     }
@@ -1910,11 +1911,11 @@ macro_rules! fmt_refs {
     ($($tr:ident),*) => {
         $(
         #[stable(feature = "rust1", since = "1.0.0")]
-        impl<T: ?Sized + $tr> $tr for &T {
+        impl<'a, T: ?Sized + $tr> $tr for &'a T {
             fn fmt(&self, f: &mut Formatter) -> Result { $tr::fmt(&**self, f) }
         }
         #[stable(feature = "rust1", since = "1.0.0")]
-        impl<T: ?Sized + $tr> $tr for &mut T {
+        impl<'a, T: ?Sized + $tr> $tr for &'a mut T {
             fn fmt(&self, f: &mut Formatter) -> Result { $tr::fmt(&**self, f) }
         }
         )*
@@ -2038,14 +2039,14 @@ impl<T: ?Sized> Pointer for *mut T {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized> Pointer for &T {
+impl<'a, T: ?Sized> Pointer for &'a T {
     fn fmt(&self, f: &mut Formatter) -> Result {
         Pointer::fmt(&(*self as *const T), f)
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized> Pointer for &mut T {
+impl<'a, T: ?Sized> Pointer for &'a mut T {
     fn fmt(&self, f: &mut Formatter) -> Result {
         Pointer::fmt(&(&**self as *const T), f)
     }
@@ -2152,14 +2153,14 @@ impl<T: ?Sized + Debug> Debug for RefCell<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized + Debug> Debug for Ref<'_, T> {
+impl<'b, T: ?Sized + Debug> Debug for Ref<'b, T> {
     fn fmt(&self, f: &mut Formatter) -> Result {
         Debug::fmt(&**self, f)
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized + Debug> Debug for RefMut<'_, T> {
+impl<'b, T: ?Sized + Debug> Debug for RefMut<'b, T> {
     fn fmt(&self, f: &mut Formatter) -> Result {
         Debug::fmt(&*(self.deref()), f)
     }

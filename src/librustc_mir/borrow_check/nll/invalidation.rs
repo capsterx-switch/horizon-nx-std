@@ -35,7 +35,7 @@ pub(super) fn generate_invalidates<'cx, 'gcx, 'tcx>(
     mir: &Mir<'tcx>,
     borrow_set: &BorrowSet<'tcx>,
 ) {
-    if all_facts.is_none() {
+    if !all_facts.is_some() {
         // Nothing to do if we don't have any facts
         return;
     }
@@ -109,7 +109,7 @@ impl<'cx, 'tcx, 'gcx> Visitor<'tcx> for InvalidationGenerator<'cx, 'tcx, 'gcx> {
                 ref inputs,
             } => {
                 let context = ContextKind::InlineAsm.new(location);
-                for (o, output) in asm.outputs.iter().zip(outputs.iter()) {
+                for (o, output) in asm.outputs.iter().zip(outputs) {
                     if o.is_indirect {
                         // FIXME(eddyb) indirect inline asm outputs should
                         // be encoeded through MIR place derefs instead.
@@ -128,16 +128,17 @@ impl<'cx, 'tcx, 'gcx> Visitor<'tcx> for InvalidationGenerator<'cx, 'tcx, 'gcx> {
                         );
                     }
                 }
-                for (_, input) in inputs.iter() {
+                for input in inputs {
                     self.consume_operand(context, input);
                 }
             }
+            // EndRegion matters to older NLL/MIR AST borrowck, not to alias NLL
+            StatementKind::EndRegion(..) |
             StatementKind::Nop |
             StatementKind::AscribeUserType(..) |
-            StatementKind::Retag { .. } |
-            StatementKind::EscapeToRaw { .. } |
+            StatementKind::Validate(..) |
             StatementKind::StorageLive(..) => {
-                // `Nop`, `AscribeUserType`, `Retag`, and `StorageLive` are irrelevant
+                // `Nop`, `AscribeUserType`, `Validate`, and `StorageLive` are irrelevant
                 // to borrow check.
             }
             StatementKind::StorageDead(local) => {
@@ -202,7 +203,6 @@ impl<'cx, 'tcx, 'gcx> Visitor<'tcx> for InvalidationGenerator<'cx, 'tcx, 'gcx> {
                 ref args,
                 ref destination,
                 cleanup: _,
-                from_hir_call: _,
             } => {
                 self.consume_operand(ContextKind::CallOperator.new(location), func);
                 for arg in args {
@@ -479,7 +479,7 @@ impl<'cg, 'cx, 'tcx, 'gcx> InvalidationGenerator<'cx, 'tcx, 'gcx> {
 
     /// Generate a new invalidates(L, B) fact
     fn generate_invalidates(&mut self, b: BorrowIndex, l: Location) {
-        let lidx = self.location_table.start_index(l);
+        let lidx = self.location_table.mid_index(l);
         self.all_facts.invalidates.push((lidx, b));
     }
 }

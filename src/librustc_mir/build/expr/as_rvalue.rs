@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! See docs in `build/expr/mod.rs`.
+//! See docs in build/expr/mod.rs
 
 use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::indexed_vec::Idx;
@@ -351,7 +351,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                 block.and(Rvalue::Aggregate(adt, fields))
             }
             ExprKind::Assign { .. } | ExprKind::AssignOp { .. } => {
-                block = unpack!(this.stmt_expr(block, expr, None));
+                block = unpack!(this.stmt_expr(block, expr));
                 block.and(this.unit_rvalue())
             }
             ExprKind::Yield { value } => {
@@ -386,9 +386,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             | ExprKind::Continue { .. }
             | ExprKind::Return { .. }
             | ExprKind::InlineAsm { .. }
-            | ExprKind::StaticRef { .. }
-            | ExprKind::PlaceTypeAscription { .. }
-            | ExprKind::ValueTypeAscription { .. } => {
+            | ExprKind::StaticRef { .. } => {
                 // these do not have corresponding `Rvalue` variants,
                 // so make an operand and then return that
                 debug_assert!(match Category::of(&expr.kind) {

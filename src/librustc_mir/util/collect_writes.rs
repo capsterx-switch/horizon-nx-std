@@ -43,8 +43,24 @@ impl<'tcx> Visitor<'tcx> for FindLocalAssignmentVisitor {
             return;
         }
 
-        if place_context.is_place_assignment() {
+        if is_place_assignment(&place_context) {
             self.locations.push(location);
         }
+    }
+}
+
+/// Returns true if this place context represents an assignment statement
+crate fn is_place_assignment(place_context: &PlaceContext) -> bool {
+    match *place_context {
+        PlaceContext::Store | PlaceContext::Call | PlaceContext::AsmOutput => true,
+        PlaceContext::Drop
+        | PlaceContext::Inspect
+        | PlaceContext::Borrow { .. }
+        | PlaceContext::Projection(..)
+        | PlaceContext::Copy
+        | PlaceContext::Move
+        | PlaceContext::StorageLive
+        | PlaceContext::StorageDead
+        | PlaceContext::Validate => false,
     }
 }

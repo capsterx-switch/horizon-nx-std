@@ -10,30 +10,33 @@
 
 //! Method lookup: the secret sauce of Rust. See the [rustc guide] chapter.
 //!
-//! [rustc guide]: https://rust-lang.github.io/rustc-guide/method-lookup.html
+//! [rustc guide]: https://rust-lang-nursery.github.io/rustc-guide/method-lookup.html
 
-mod confirm;
-pub mod probe;
-mod suggest;
+use check::FnCtxt;
+use hir::def::Def;
+use hir::def_id::DefId;
+use namespace::Namespace;
+use rustc::ty::subst::Substs;
+use rustc::traits;
+use rustc::ty::{self, Ty, ToPredicate, ToPolyTraitRef, TraitRef, TypeFoldable};
+use rustc::ty::GenericParamDefKind;
+use rustc::ty::subst::Subst;
+use rustc::infer::{self, InferOk};
+
+use syntax::ast;
+use syntax_pos::Span;
+
+use rustc::hir;
+
+use rustc_data_structures::sync::Lrc;
 
 pub use self::MethodError::*;
 pub use self::CandidateSource::*;
 pub use self::suggest::TraitInfo;
 
-use check::FnCtxt;
-use namespace::Namespace;
-use rustc_data_structures::sync::Lrc;
-use rustc::hir;
-use rustc::hir::def::Def;
-use rustc::hir::def_id::DefId;
-use rustc::traits;
-use rustc::ty::subst::Substs;
-use rustc::ty::{self, Ty, ToPredicate, ToPolyTraitRef, TraitRef, TypeFoldable};
-use rustc::ty::GenericParamDefKind;
-use rustc::ty::subst::Subst;
-use rustc::infer::{self, InferOk};
-use syntax::ast;
-use syntax_pos::Span;
+mod confirm;
+pub mod probe;
+mod suggest;
 
 use self::probe::{IsSuggestion, ProbeScope};
 
@@ -47,7 +50,7 @@ pub struct MethodCallee<'tcx> {
     pub def_id: DefId,
     pub substs: &'tcx Substs<'tcx>,
 
-    /// Instantiated method signature, i.e., it has been
+    /// Instantiated method signature, i.e. it has been
     /// substituted, normalized, and has had late-bound
     /// lifetimes replaced with inference variables.
     pub sig: ty::FnSig<'tcx>,
@@ -104,7 +107,8 @@ impl<'tcx> NoMatchData<'tcx> {
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum CandidateSource {
     ImplSource(DefId),
-    TraitSource(DefId /* trait id */),
+    TraitSource(// trait id
+                DefId),
 }
 
 impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
@@ -167,10 +171,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         )?;
 
         if let Some(import_id) = pick.import_id {
-            let import_def_id = self.tcx.hir().local_def_id(import_id);
+            let import_def_id = self.tcx.hir.local_def_id(import_id);
             debug!("used_trait_import: {:?}", import_def_id);
             Lrc::get_mut(&mut self.tables.borrow_mut().used_trait_imports)
-                .unwrap().insert(import_def_id);
+                                        .unwrap().insert(import_def_id);
         }
 
         self.tcx.check_stability(pick.item.def_id, Some(call_expr.id), span);
@@ -235,7 +239,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     /// an obligation for a particular trait with the given self-type and checks
     /// whether that trait is implemented.
     ///
-    /// FIXME(#18741): it seems likely that we can consolidate some of this
+    /// FIXME(#18741) -- It seems likely that we can consolidate some of this
     /// code with the other method-lookup code. In particular, the second half
     /// of this method is basically the same as confirmation.
     pub fn lookup_method_in_trait(&self,
@@ -285,14 +289,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // Trait must have a method named `m_name` and it should not have
         // type parameters or early-bound regions.
         let tcx = self.tcx;
-        let method_item = match self.associated_item(trait_def_id, m_name, Namespace::Value) {
-            Some(method_item) => method_item,
-            None => {
-                tcx.sess.delay_span_bug(span,
-                    "operator trait does not have corresponding operator method");
-                return None;
-            }
-        };
+        let method_item =
+            self.associated_item(trait_def_id, m_name, Namespace::Value).unwrap();
         let def_id = method_item.def_id;
         let generics = tcx.generics_of(def_id);
         assert_eq!(generics.params.len(), 0);
@@ -303,15 +301,13 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // Instantiate late-bound regions and substitute the trait
         // parameters into the method type to get the actual method type.
         //
-        // N.B., instantiate late-bound regions first so that
+        // NB: Instantiate late-bound regions first so that
         // `instantiate_type_scheme` can normalize associated types that
         // may reference those regions.
         let fn_sig = tcx.fn_sig(def_id);
-        let fn_sig = self.replace_bound_vars_with_fresh_vars(
-            span,
-            infer::FnCall,
-            &fn_sig
-        ).0;
+        let fn_sig = self.replace_late_bound_regions_with_fresh_var(span,
+                                                                    infer::FnCall,
+                                                                    &fn_sig).0;
         let fn_sig = fn_sig.subst(self.tcx, substs);
         let fn_sig = match self.normalize_associated_types_in_as_infer_ok(span, &fn_sig) {
             InferOk { value, obligations: o } => {
@@ -320,7 +316,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             }
         };
 
-        // Register obligations for the parameters. This will include the
+        // Register obligations for the parameters.  This will include the
         // `Self` parameter, which in turn has a bound of the main trait,
         // so this also effectively registers `obligation` as well.  (We
         // used to register `obligation` explicitly, but that resulted in
@@ -335,7 +331,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 value
             }
         };
-        assert!(!bounds.has_escaping_bound_vars());
+        assert!(!bounds.has_escaping_regions());
 
         let cause = traits::ObligationCause::misc(span, self.body_id);
         obligations.extend(traits::predicates_for_generics(cause.clone(),
@@ -376,7 +372,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                        self_ty, expr_id, ProbeScope::TraitsInScope)?;
 
         if let Some(import_id) = pick.import_id {
-            let import_def_id = self.tcx.hir().local_def_id(import_id);
+            let import_def_id = self.tcx.hir.local_def_id(import_id);
             debug!("used_trait_import: {:?}", import_def_id);
             Lrc::get_mut(&mut self.tables.borrow_mut().used_trait_imports)
                                         .unwrap().insert(import_def_id);

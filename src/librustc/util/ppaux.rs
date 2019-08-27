@@ -16,9 +16,9 @@ use ty::subst::{self, Subst};
 use ty::{BrAnon, BrEnv, BrFresh, BrNamed};
 use ty::{Bool, Char, Adt};
 use ty::{Error, Str, Array, Slice, Float, FnDef, FnPtr};
-use ty::{Param, Bound, RawPtr, Ref, Never, Tuple};
+use ty::{Param, RawPtr, Ref, Never, Tuple};
 use ty::{Closure, Generator, GeneratorWitness, Foreign, Projection, Opaque};
-use ty::{Placeholder, UnnormalizedProjection, Dynamic, Int, Uint, Infer};
+use ty::{Dynamic, Int, Uint, Infer};
 use ty::{self, RegionVid, Ty, TyCtxt, TypeFoldable, GenericParamCount, GenericParamDefKind};
 use util::nodemap::FxHashSet;
 
@@ -46,7 +46,7 @@ thread_local! {
 
 macro_rules! gen_display_debug_body {
     ( $with:path ) => {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             let mut cx = PrintContext::new();
             $with(self, f, &mut cx)
         }
@@ -182,7 +182,7 @@ impl PrintContext {
     fn prepare_late_bound_region_info<'tcx, T>(&mut self, value: &ty::Binder<T>)
     where T: TypeFoldable<'tcx>
     {
-        let mut collector = LateBoundRegionNameCollector(Default::default());
+        let mut collector = LateBoundRegionNameCollector(FxHashSet());
         value.visit_with(&mut collector);
         self.used_region_names = Some(collector.0);
         self.region_index = 0;
@@ -225,9 +225,9 @@ pub trait Print {
 impl PrintContext {
     fn fn_sig<F: fmt::Write>(&mut self,
                              f: &mut F,
-                             inputs: &[Ty<'_>],
+                             inputs: &[Ty],
                              variadic: bool,
-                             output: Ty<'_>)
+                             output: Ty)
                              -> fmt::Result {
         write!(f, "(")?;
         let mut inputs = inputs.iter();
@@ -250,18 +250,26 @@ impl PrintContext {
 
     fn parameterized<F: fmt::Write>(&mut self,
                                     f: &mut F,
-                                    substs: &subst::Substs<'_>,
-                                    did: DefId,
-                                    projections: &[ty::ProjectionPredicate<'_>])
+                                    substs: &subst::Substs,
+                                    mut did: DefId,
+                                    projections: &[ty::ProjectionPredicate])
                                     -> fmt::Result {
         let key = ty::tls::with(|tcx| tcx.def_key(did));
+        let mut item_name = if let Some(name) = key.disambiguated_data.data.get_opt_name() {
+            Some(name)
+        } else {
+            did.index = key.parent.unwrap_or_else(
+                || bug!("finding type for {:?}, encountered def-id {:?} with no parent",
+                        did, did));
+            self.parameterized(f, substs, did, projections)?;
+            return write!(f, "::{}", key.disambiguated_data.data.as_interned_str());
+        };
 
         let verbose = self.is_verbose;
         let mut num_supplied_defaults = 0;
         let mut has_self = false;
         let mut own_counts: GenericParamCount = Default::default();
         let mut is_value_path = false;
-        let mut item_name = Some(key.disambiguated_data.data.as_interned_str());
         let fn_trait_kind = ty::tls::with(|tcx| {
             // Unfortunately, some kinds of items (e.g., closures) don't have
             // generics. So walk back up the find the closest parent that DOES
@@ -274,7 +282,6 @@ impl PrintContext {
                     DefPathData::AssocTypeInImpl(_) |
                     DefPathData::AssocExistentialInImpl(_) |
                     DefPathData::Trait(_) |
-                    DefPathData::Impl |
                     DefPathData::TypeNs(_) => {
                         break;
                     }
@@ -285,6 +292,7 @@ impl PrintContext {
                     }
                     DefPathData::CrateRoot |
                     DefPathData::Misc |
+                    DefPathData::Impl |
                     DefPathData::Module(_) |
                     DefPathData::MacroDef(_) |
                     DefPathData::ClosureExpr |
@@ -387,12 +395,12 @@ impl PrintContext {
         let print_regions = |f: &mut F, start: &str, skip, count| {
             // Don't print any regions if they're all erased.
             let regions = || substs.regions().skip(skip).take(count);
-            if regions().all(|r: ty::Region<'_>| *r == ty::ReErased) {
+            if regions().all(|r: ty::Region| *r == ty::ReErased) {
                 return Ok(());
             }
 
             for region in regions() {
-                let region: ty::Region<'_> = region;
+                let region: ty::Region = region;
                 start_or_continue(f, start, ", ")?;
                 if verbose {
                     write!(f, "{:?}", region)?;
@@ -523,7 +531,7 @@ impl PrintContext {
                         }
                     };
                     let _ = write!(f, "{}", name);
-                    ty::BrNamed(tcx.hir().local_def_id(CRATE_NODE_ID), name)
+                    ty::BrNamed(tcx.hir.local_def_id(CRATE_NODE_ID), name)
                 }
             };
             tcx.mk_region(ty::ReLateBound(ty::INNERMOST, br))
@@ -556,9 +564,9 @@ pub fn identify_regions() -> bool {
 }
 
 pub fn parameterized<F: fmt::Write>(f: &mut F,
-                                    substs: &subst::Substs<'_>,
+                                    substs: &subst::Substs,
                                     did: DefId,
-                                    projections: &[ty::ProjectionPredicate<'_>])
+                                    projections: &[ty::ProjectionPredicate])
                                     -> fmt::Result {
     PrintContext::new().parameterized(f, substs, did, projections)
 }
@@ -613,16 +621,16 @@ define_print! {
                 // Use a type that can't appear in defaults of type parameters.
                 let dummy_self = tcx.mk_infer(ty::FreshTy(0));
 
-                let principal = tcx
-                    .lift(&self.principal())
-                    .expect("could not lift TraitRef for printing")
-                    .with_self_ty(tcx, dummy_self);
-                let projections = self.projection_bounds().map(|p| {
-                    tcx.lift(&p)
-                        .expect("could not lift projection for printing")
-                        .with_self_ty(tcx, dummy_self)
-                }).collect::<Vec<_>>();
-                cx.parameterized(f, principal.substs, principal.def_id, &projections)?;
+                if let Some(p) = self.principal() {
+                    let principal = tcx.lift(&p).expect("could not lift TraitRef for printing")
+                        .with_self_ty(tcx, dummy_self);
+                    let projections = self.projection_bounds().map(|p| {
+                        tcx.lift(&p)
+                            .expect("could not lift projection for printing")
+                            .with_self_ty(tcx, dummy_self)
+                    }).collect::<Vec<_>>();
+                    cx.parameterized(f, principal.substs, principal.def_id, &projections)?;
+                }
 
                 // Builtin bounds.
                 for did in self.auto_traits() {
@@ -638,7 +646,7 @@ define_print! {
 }
 
 impl fmt::Debug for ty::GenericParamDef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let type_name = match self.kind {
             ty::GenericParamDefKind::Lifetime => "Lifetime",
             ty::GenericParamDefKind::Type {..} => "Type",
@@ -652,7 +660,7 @@ impl fmt::Debug for ty::GenericParamDef {
 }
 
 impl fmt::Debug for ty::TraitDef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         ty::tls::with(|tcx| {
             write!(f, "{}", tcx.item_path_str(self.def_id))
         })
@@ -660,7 +668,7 @@ impl fmt::Debug for ty::TraitDef {
 }
 
 impl fmt::Debug for ty::AdtDef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         ty::tls::with(|tcx| {
             write!(f, "{}", tcx.item_path_str(self.did))
         })
@@ -668,7 +676,7 @@ impl fmt::Debug for ty::AdtDef {
 }
 
 impl<'tcx> fmt::Debug for ty::ClosureUpvar<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "ClosureUpvar({:?},{:?})",
                self.def,
                self.ty)
@@ -676,16 +684,16 @@ impl<'tcx> fmt::Debug for ty::ClosureUpvar<'tcx> {
 }
 
 impl fmt::Debug for ty::UpvarId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "UpvarId({:?};`{}`;{:?})",
-               self.var_path.hir_id,
-               ty::tls::with(|tcx| tcx.hir().name(tcx.hir().hir_to_node_id(self.var_path.hir_id))),
+               self.var_id,
+               ty::tls::with(|tcx| tcx.hir.name(tcx.hir.hir_to_node_id(self.var_id))),
                self.closure_expr_id)
     }
 }
 
 impl<'tcx> fmt::Debug for ty::UpvarBorrow<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "UpvarBorrow({:?}, {:?})",
                self.kind, self.region)
     }
@@ -790,9 +798,12 @@ define_print! {
                 ty::ReEarlyBound(ref data) => {
                     write!(f, "{}", data.name)
                 }
+                ty::ReCanonical(_) => {
+                    write!(f, "'_")
+                }
                 ty::ReLateBound(_, br) |
                 ty::ReFree(ty::FreeRegion { bound_region: br, .. }) |
-                ty::RePlaceholder(ty::PlaceholderRegion { name: br, .. }) => {
+                ty::ReSkolemized(_, br) => {
                     write!(f, "{}", br)
                 }
                 ty::ReScope(scope) if cx.identify_regions => {
@@ -857,8 +868,12 @@ define_print! {
                     write!(f, "{:?}", vid)
                 }
 
-                ty::RePlaceholder(placeholder) => {
-                    write!(f, "RePlaceholder({:?})", placeholder)
+                ty::ReCanonical(c) => {
+                    write!(f, "'?{}", c.index())
+                }
+
+                ty::ReSkolemized(universe, ref bound_region) => {
+                    write!(f, "ReSkolemized({:?}, {:?})", universe, bound_region)
                 }
 
                 ty::ReEmpty => write!(f, "ReEmpty"),
@@ -927,25 +942,25 @@ define_print! {
 }
 
 impl fmt::Debug for ty::TyVid {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "_#{}t", self.index)
     }
 }
 
 impl fmt::Debug for ty::IntVid {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "_#{}i", self.index)
     }
 }
 
 impl fmt::Debug for ty::FloatVid {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "_#{}f", self.index)
     }
 }
 
 impl fmt::Debug for ty::RegionVid {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if let Some((region, counter)) = get_highlight_region_for_regionvid() {
             debug!("RegionVid.fmt: region={:?} self={:?} counter={:?}", region, self, counter);
             return if *self == region {
@@ -969,6 +984,7 @@ define_print! {
                     ty::TyVar(_) => write!(f, "_"),
                     ty::IntVar(_) => write!(f, "{}", "{integer}"),
                     ty::FloatVar(_) => write!(f, "{}", "{float}"),
+                    ty::CanonicalTy(_) => write!(f, "_"),
                     ty::FreshTy(v) => write!(f, "FreshTy({})", v),
                     ty::FreshIntTy(v) => write!(f, "FreshIntTy({})", v),
                     ty::FreshFloatTy(v) => write!(f, "FreshFloatTy({})", v)
@@ -980,6 +996,7 @@ define_print! {
                 ty::TyVar(ref v) => write!(f, "{:?}", v),
                 ty::IntVar(ref v) => write!(f, "{:?}", v),
                 ty::FloatVar(ref v) => write!(f, "{:?}", v),
+                ty::CanonicalTy(v) => write!(f, "?{:?}", v.index()),
                 ty::FreshTy(v) => write!(f, "FreshTy({:?})", v),
                 ty::FreshIntTy(v) => write!(f, "FreshIntTy({:?})", v),
                 ty::FreshFloatTy(v) => write!(f, "FreshFloatTy({:?})", v)
@@ -989,7 +1006,7 @@ define_print! {
 }
 
 impl fmt::Debug for ty::IntVarValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             ty::IntType(ref v) => v.fmt(f),
             ty::UintType(ref v) => v.fmt(f),
@@ -998,7 +1015,7 @@ impl fmt::Debug for ty::IntVarValue {
 }
 
 impl fmt::Debug for ty::FloatVarValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(f)
     }
 }
@@ -1009,7 +1026,7 @@ impl fmt::Debug for ty::FloatVarValue {
     where T: fmt::Display + for<'a> ty::Lift<'a>,
           for<'a> <T as ty::Lift<'a>>::Lifted: fmt::Display + TypeFoldable<'a>
 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         ty::tls::with(|tcx| in_binder(f, tcx, self, tcx.lift(self)))
     }
 }*/
@@ -1110,19 +1127,6 @@ define_print! {
                 Infer(infer_ty) => write!(f, "{}", infer_ty),
                 Error => write!(f, "[type error]"),
                 Param(ref param_ty) => write!(f, "{}", param_ty),
-                Bound(debruijn, bound_ty) => {
-                    match bound_ty.kind {
-                        ty::BoundTyKind::Anon => {
-                            if debruijn == ty::INNERMOST {
-                                write!(f, "^{}", bound_ty.var.index())
-                            } else {
-                                write!(f, "^{}_{}", debruijn.index(), bound_ty.var.index())
-                            }
-                        }
-
-                        ty::BoundTyKind::Param(p) => write!(f, "{}", p),
-                    }
-                }
                 Adt(def, substs) => cx.parameterized(f, substs, def.did, &[]),
                 Dynamic(data, r) => {
                     let r = r.print_to_string(cx);
@@ -1139,14 +1143,6 @@ define_print! {
                 }
                 Foreign(def_id) => parameterized(f, subst::Substs::empty(), def_id, &[]),
                 Projection(ref data) => data.print(f, cx),
-                UnnormalizedProjection(ref data) => {
-                    write!(f, "Unnormalized(")?;
-                    data.print(f, cx)?;
-                    write!(f, ")")
-                }
-                Placeholder(placeholder) => {
-                    write!(f, "Placeholder({:?})", placeholder)
-                }
                 Opaque(def_id, substs) => {
                     if cx.is_verbose {
                         return write!(f, "Opaque({:?}, {:?})", def_id, substs);
@@ -1208,15 +1204,15 @@ define_print! {
                         write!(f, "[static generator")?;
                     }
 
-                    if let Some(node_id) = tcx.hir().as_local_node_id(did) {
-                        write!(f, "@{:?}", tcx.hir().span(node_id))?;
+                    if let Some(node_id) = tcx.hir.as_local_node_id(did) {
+                        write!(f, "@{:?}", tcx.hir.span(node_id))?;
                         let mut sep = " ";
                         tcx.with_freevars(node_id, |freevars| {
                             for (freevar, upvar_ty) in freevars.iter().zip(upvar_tys) {
                                 print!(f, cx,
                                        write("{}{}:",
                                              sep,
-                                             tcx.hir().name(freevar.var_id())),
+                                             tcx.hir.name(freevar.var_id())),
                                        print(upvar_ty))?;
                                 sep = ", ";
                             }
@@ -1244,11 +1240,11 @@ define_print! {
                     let upvar_tys = substs.upvar_tys(did, tcx);
                     write!(f, "[closure")?;
 
-                    if let Some(node_id) = tcx.hir().as_local_node_id(did) {
+                    if let Some(node_id) = tcx.hir.as_local_node_id(did) {
                         if tcx.sess.opts.debugging_opts.span_free_formats {
                             write!(f, "@{:?}", node_id)?;
                         } else {
-                            write!(f, "@{:?}", tcx.hir().span(node_id))?;
+                            write!(f, "@{:?}", tcx.hir.span(node_id))?;
                         }
                         let mut sep = " ";
                         tcx.with_freevars(node_id, |freevars| {
@@ -1256,7 +1252,7 @@ define_print! {
                                 print!(f, cx,
                                        write("{}{}:",
                                              sep,
-                                             tcx.hir().name(freevar.var_id())),
+                                             tcx.hir.name(freevar.var_id())),
                                        print(upvar_ty))?;
                                 sep = ", ";
                             }

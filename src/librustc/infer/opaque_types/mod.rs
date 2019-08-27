@@ -121,7 +121,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             parent_def_id,
             body_id,
             param_env,
-            opaque_types: Default::default(),
+            opaque_types: DefIdMap(),
             obligations: vec![],
         };
         let value = instantiator.instantiate_opaque_types_in_map(value);
@@ -366,8 +366,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         let mut types = vec![concrete_ty];
         let bound_region = |r| self.sub_regions(infer::CallReturn(span), least_region, r);
         while let Some(ty) = types.pop() {
-            let mut components = smallvec![];
-            self.tcx.push_outlives_components(ty, &mut components);
+            let mut components = self.tcx.outlives_components(ty);
             while let Some(component) = components.pop() {
                 match component {
                     Component::Region(r) => {
@@ -691,13 +690,13 @@ impl<'a, 'gcx, 'tcx> Instantiator<'a, 'gcx, 'tcx> {
                     //     let x = || foo(); // returns the Opaque assoc with `foo`
                     // }
                     // ```
-                    if let Some(opaque_node_id) = tcx.hir().as_local_node_id(def_id) {
+                    if let Some(opaque_node_id) = tcx.hir.as_local_node_id(def_id) {
                         let parent_def_id = self.parent_def_id;
                         let def_scope_default = || {
-                            let opaque_parent_node_id = tcx.hir().get_parent(opaque_node_id);
-                            parent_def_id == tcx.hir().local_def_id(opaque_parent_node_id)
+                            let opaque_parent_node_id = tcx.hir.get_parent(opaque_node_id);
+                            parent_def_id == tcx.hir.local_def_id(opaque_parent_node_id)
                         };
-                        let in_definition_scope = match tcx.hir().find(opaque_node_id) {
+                        let in_definition_scope = match tcx.hir.find(opaque_node_id) {
                             Some(Node::Item(item)) => match item.node {
                                 // impl trait
                                 hir::ItemKind::Existential(hir::ExistTy {
@@ -725,7 +724,7 @@ impl<'a, 'gcx, 'tcx> Instantiator<'a, 'gcx, 'tcx> {
                             },
                             _ => bug!(
                                 "expected (impl) item, found {}",
-                                tcx.hir().node_to_string(opaque_node_id),
+                                tcx.hir.node_to_string(opaque_node_id),
                             ),
                         };
                         if in_definition_scope {
@@ -761,7 +760,7 @@ impl<'a, 'gcx, 'tcx> Instantiator<'a, 'gcx, 'tcx> {
         );
 
         // Use the same type variable if the exact same Opaque appears more
-        // than once in the return type (e.g., if it's passed to a type alias).
+        // than once in the return type (e.g. if it's passed to a type alias).
         if let Some(opaque_defn) = self.opaque_types.get(&def_id) {
             return opaque_defn.concrete_ty;
         }
@@ -783,7 +782,7 @@ impl<'a, 'gcx, 'tcx> Instantiator<'a, 'gcx, 'tcx> {
         );
 
         // make sure that we are in fact defining the *entire* type
-        // e.g., `existential type Foo<T: Bound>: Bar;` needs to be
+        // e.g. `existential type Foo<T: Bound>: Bar;` needs to be
         // defined by a function like `fn foo<T: Bound>() -> Foo<T>`.
         debug!(
             "instantiate_opaque_types: param_env: {:#?}",
@@ -804,7 +803,6 @@ impl<'a, 'gcx, 'tcx> Instantiator<'a, 'gcx, 'tcx> {
         );
         debug!("instantiate_opaque_types: ty_var={:?}", ty_var);
 
-        self.obligations.reserve(bounds.predicates.len());
         for predicate in bounds.predicates {
             // Change the predicate to refer to the type variable,
             // which will be the concrete type instead of the opaque type.
@@ -843,21 +841,21 @@ impl<'a, 'gcx, 'tcx> Instantiator<'a, 'gcx, 'tcx> {
 /// We will return true if the reference is within the same module as the existential type
 /// So true for f1, false for f2.
 pub fn may_define_existential_type(
-    tcx: TyCtxt<'_, '_, '_>,
+    tcx: TyCtxt,
     def_id: DefId,
     opaque_node_id: ast::NodeId,
 ) -> bool {
     let mut node_id = tcx
-        .hir()
+        .hir
         .as_local_node_id(def_id)
         .unwrap();
     // named existential types can be defined by any siblings or
     // children of siblings
-    let mod_id = tcx.hir().get_parent(opaque_node_id);
+    let mod_id = tcx.hir.get_parent(opaque_node_id);
     // so we walk up the node tree until we hit the root or the parent
     // of the opaque type
     while node_id != mod_id && node_id != ast::CRATE_NODE_ID {
-        node_id = tcx.hir().get_parent(node_id);
+        node_id = tcx.hir.get_parent(node_id);
     }
     // syntactically we are allowed to define the concrete type
     node_id == mod_id

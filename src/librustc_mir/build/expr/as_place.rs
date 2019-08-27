@@ -16,7 +16,6 @@ use build::{BlockAnd, BlockAndExtension, Builder};
 use hair::*;
 use rustc::mir::interpret::EvalErrorKind::BoundsCheck;
 use rustc::mir::*;
-use rustc::ty::Variance;
 
 use rustc_data_structures::indexed_vec::Idx;
 
@@ -86,9 +85,6 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                 // region_scope=None so place indexes live forever. They are scalars so they
                 // do not need storage annotations, and they are often copied between
                 // places.
-                // Making this a *fresh* temporary also means we do not have to worry about
-                // the index changing later: Nothing will ever change this temporary.
-                // The "retagging" transformation (for Stacked Borrows) relies on this.
                 let idx = unpack!(block = this.as_temp(block, None, index, Mutability::Mut));
 
                 // bounds check:
@@ -139,44 +135,6 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                 def_id: id,
                 ty: expr.ty,
             }))),
-
-            ExprKind::PlaceTypeAscription { source, user_ty } => {
-                let place = unpack!(block = this.as_place(block, source));
-                if let Some(user_ty) = user_ty {
-                    this.cfg.push(
-                        block,
-                        Statement {
-                            source_info,
-                            kind: StatementKind::AscribeUserType(
-                                place.clone(),
-                                Variance::Invariant,
-                                box UserTypeProjection { base: user_ty, projs: vec![], },
-                            ),
-                        },
-                    );
-                }
-                block.and(place)
-            }
-            ExprKind::ValueTypeAscription { source, user_ty } => {
-                let source = this.hir.mirror(source);
-                let temp = unpack!(
-                    block = this.as_temp(block, source.temp_lifetime, source, mutability)
-                );
-                if let Some(user_ty) = user_ty {
-                    this.cfg.push(
-                        block,
-                        Statement {
-                            source_info,
-                            kind: StatementKind::AscribeUserType(
-                                Place::Local(temp.clone()),
-                                Variance::Invariant,
-                                box UserTypeProjection { base: user_ty, projs: vec![], },
-                            ),
-                        },
-                    );
-                }
-                block.and(Place::Local(temp))
-            }
 
             ExprKind::Array { .. }
             | ExprKind::Tuple { .. }

@@ -15,10 +15,11 @@ use ast::{self, CrateConfig, NodeId};
 use early_buffered_lints::{BufferedEarlyLint, BufferedEarlyLintId};
 use source_map::{SourceMap, FilePathMapping};
 use syntax_pos::{Span, SourceFile, FileName, MultiSpan};
-use errors::{FatalError, Level, Handler, ColorConfig, Diagnostic, DiagnosticBuilder};
+use errors::{Handler, ColorConfig, DiagnosticBuilder};
 use feature_gate::UnstableFeatures;
 use parse::parser::Parser;
 use ptr::P;
+use str::char_at;
 use symbol::Symbol;
 use tokenstream::{TokenStream, TokenTree};
 use diagnostics::plugin::ErrorMap;
@@ -51,9 +52,12 @@ pub struct ParseSess {
     pub raw_identifier_spans: Lock<Vec<Span>>,
     /// The registered diagnostics codes
     crate registered_diagnostics: Lock<ErrorMap>,
+    // Spans where a `mod foo;` statement was included in a non-mod.rs file.
+    // These are used to issue errors if the non_modrs_mods feature is not enabled.
+    pub non_modrs_mods: Lock<Vec<(ast::Ident, Span)>>,
     /// Used to determine and report recursive mod inclusions
     included_mod_stack: Lock<Vec<PathBuf>>,
-    source_map: Lrc<SourceMap>,
+    code_map: Lrc<SourceMap>,
     pub buffered_lints: Lock<Vec<BufferedEarlyLint>>,
 }
 
@@ -67,7 +71,7 @@ impl ParseSess {
         ParseSess::with_span_handler(handler, cm)
     }
 
-    pub fn with_span_handler(handler: Handler, source_map: Lrc<SourceMap>) -> ParseSess {
+    pub fn with_span_handler(handler: Handler, code_map: Lrc<SourceMap>) -> ParseSess {
         ParseSess {
             span_diagnostic: handler,
             unstable_features: UnstableFeatures::from_environment(),
@@ -76,13 +80,14 @@ impl ParseSess {
             raw_identifier_spans: Lock::new(Vec::new()),
             registered_diagnostics: Lock::new(ErrorMap::new()),
             included_mod_stack: Lock::new(vec![]),
-            source_map,
+            code_map,
+            non_modrs_mods: Lock::new(vec![]),
             buffered_lints: Lock::new(vec![]),
         }
     }
 
     pub fn source_map(&self) -> &SourceMap {
-        &self.source_map
+        &self.code_map
     }
 
     pub fn buffer_lint<S: Into<MultiSpan>>(&self,
@@ -169,35 +174,18 @@ pub fn parse_stream_from_source_str(name: FileName, source: String, sess: &Parse
     source_file_to_stream(sess, sess.source_map().new_source_file(name, source), override_span)
 }
 
-/// Create a new parser from a source string
+// Create a new parser from a source string
 pub fn new_parser_from_source_str(sess: &ParseSess, name: FileName, source: String)
                                       -> Parser {
-    panictry_buffer!(&sess.span_diagnostic, maybe_new_parser_from_source_str(sess, name, source))
-}
-
-/// Create a new parser from a source string. Returns any buffered errors from lexing the initial
-/// token stream.
-pub fn maybe_new_parser_from_source_str(sess: &ParseSess, name: FileName, source: String)
-    -> Result<Parser, Vec<Diagnostic>>
-{
-    let mut parser = maybe_source_file_to_parser(sess,
-                                                 sess.source_map().new_source_file(name, source))?;
+    let mut parser = source_file_to_parser(sess, sess.source_map().new_source_file(name, source));
     parser.recurse_into_file_modules = false;
-    Ok(parser)
+    parser
 }
 
 /// Create a new parser, handling errors as appropriate
 /// if the file doesn't exist
 pub fn new_parser_from_file<'a>(sess: &'a ParseSess, path: &Path) -> Parser<'a> {
     source_file_to_parser(sess, file_to_source_file(sess, path, None))
-}
-
-/// Create a new parser, returning buffered diagnostics if the file doesn't
-/// exist or from lexing the initial token stream.
-pub fn maybe_new_parser_from_file<'a>(sess: &'a ParseSess, path: &Path)
-    -> Result<Parser<'a>, Vec<Diagnostic>> {
-    let file = try_file_to_source_file(sess, path, None).map_err(|db| vec![db])?;
-    maybe_source_file_to_parser(sess, file)
 }
 
 /// Given a session, a crate config, a path, and a span, add
@@ -216,23 +204,14 @@ crate fn new_sub_parser_from_file<'a>(sess: &'a ParseSess,
 
 /// Given a source_file and config, return a parser
 fn source_file_to_parser(sess: & ParseSess, source_file: Lrc<SourceFile>) -> Parser {
-    panictry_buffer!(&sess.span_diagnostic,
-                     maybe_source_file_to_parser(sess, source_file))
-}
-
-/// Given a source_file and config, return a parser. Returns any buffered errors from lexing the
-/// initial token stream.
-fn maybe_source_file_to_parser(sess: &ParseSess, source_file: Lrc<SourceFile>)
-    -> Result<Parser, Vec<Diagnostic>>
-{
     let end_pos = source_file.end_pos;
-    let mut parser = stream_to_parser(sess, maybe_file_to_stream(sess, source_file, None)?);
+    let mut parser = stream_to_parser(sess, source_file_to_stream(sess, source_file, None));
 
     if parser.token == token::Eof && parser.span.is_dummy() {
         parser.span = Span::new(end_pos, end_pos, parser.span.ctxt());
     }
 
-    Ok(parser)
+    parser
 }
 
 // must preserve old name for now, because quote! from the *existing*
@@ -245,30 +224,17 @@ pub fn new_parser_from_tts(sess: &ParseSess, tts: Vec<TokenTree>) -> Parser {
 // base abstractions
 
 /// Given a session and a path and an optional span (for error reporting),
-/// add the path to the session's source_map and return the new source_file or
-/// error when a file can't be read.
-fn try_file_to_source_file(sess: &ParseSess, path: &Path, spanopt: Option<Span>)
-                   -> Result<Lrc<SourceFile>, Diagnostic> {
-    sess.source_map().load_file(path)
-    .map_err(|e| {
-        let msg = format!("couldn't read {}: {}", path.display(), e);
-        let mut diag = Diagnostic::new(Level::Fatal, &msg);
-        if let Some(sp) = spanopt {
-            diag.set_span(sp);
-        }
-        diag
-    })
-}
-
-/// Given a session and a path and an optional span (for error reporting),
 /// add the path to the session's source_map and return the new source_file.
 fn file_to_source_file(sess: &ParseSess, path: &Path, spanopt: Option<Span>)
                    -> Lrc<SourceFile> {
-    match try_file_to_source_file(sess, path, spanopt) {
+    match sess.source_map().load_file(path) {
         Ok(source_file) => source_file,
-        Err(d) => {
-            DiagnosticBuilder::new_diagnostic(&sess.span_diagnostic, d).emit();
-            FatalError.raise();
+        Err(e) => {
+            let msg = format!("couldn't read {:?}: {}", path.display(), e);
+            match spanopt {
+                Some(sp) => sess.span_diagnostic.span_fatal(sp, &msg).raise(),
+                None => sess.span_diagnostic.fatal(&msg).raise()
+            }
         }
     }
 }
@@ -277,25 +243,9 @@ fn file_to_source_file(sess: &ParseSess, path: &Path, spanopt: Option<Span>)
 pub fn source_file_to_stream(sess: &ParseSess,
                              source_file: Lrc<SourceFile>,
                              override_span: Option<Span>) -> TokenStream {
-    panictry_buffer!(&sess.span_diagnostic, maybe_file_to_stream(sess, source_file, override_span))
-}
-
-/// Given a source file, produce a sequence of token-trees. Returns any buffered errors from
-/// parsing the token tream.
-pub fn maybe_file_to_stream(sess: &ParseSess,
-                            source_file: Lrc<SourceFile>,
-                            override_span: Option<Span>) -> Result<TokenStream, Vec<Diagnostic>> {
-    let mut srdr = lexer::StringReader::new_or_buffered_errs(sess, source_file, override_span)?;
+    let mut srdr = lexer::StringReader::new(sess, source_file, override_span);
     srdr.real_token();
-
-    match srdr.parse_all_token_trees() {
-        Ok(stream) => Ok(stream),
-        Err(err) => {
-            let mut buffer = Vec::with_capacity(1);
-            err.buffer(&mut buffer);
-            Err(buffer)
-        }
-    }
+    panictry!(srdr.parse_all_token_trees())
 }
 
 /// Given stream and the `ParseSess`, produce a parser
@@ -456,7 +406,9 @@ fn raw_str_lit(lit: &str) -> String {
 
 // check if `s` looks like i32 or u1234 etc.
 fn looks_like_width_suffix(first_chars: &[char], s: &str) -> bool {
-    s.starts_with(first_chars) && s[1..].chars().all(|c| c.is_ascii_digit())
+    s.len() > 1 &&
+        first_chars.contains(&char_at(s, 0)) &&
+        s[1..].chars().all(|c| '0' <= c && c <= '9')
 }
 
 macro_rules! err {
@@ -542,17 +494,8 @@ fn float_lit(s: &str, suffix: Option<Symbol>, diag: Option<(Span, &Handler)>)
                  -> Option<ast::LitKind> {
     debug!("float_lit: {:?}, {:?}", s, suffix);
     // FIXME #2252: bounds checking float literals is deferred until trans
-
-    // Strip underscores without allocating a new String unless necessary.
-    let s2;
-    let s = if s.chars().any(|c| c == '_') {
-        s2 = s.chars().filter(|&c| c != '_').collect::<String>();
-        &s2
-    } else {
-        s
-    };
-
-    filtered_float_lit(Symbol::intern(s), suffix, diag)
+    let s = s.chars().filter(|&c| c != '_').collect::<String>();
+    filtered_float_lit(Symbol::intern(&s), suffix, diag)
 }
 
 /// Parse a string representing a byte literal into its final form. Similar to `char_lit`
@@ -648,14 +591,8 @@ fn integer_lit(s: &str, suffix: Option<Symbol>, diag: Option<(Span, &Handler)>)
                    -> Option<ast::LitKind> {
     // s can only be ascii, byte indexing is fine
 
-    // Strip underscores without allocating a new String unless necessary.
-    let s2;
-    let mut s = if s.chars().any(|c| c == '_') {
-        s2 = s.chars().filter(|&c| c != '_').collect::<String>();
-        &s2
-    } else {
-        s
-    };
+    let s2 = s.chars().filter(|&c| c != '_').collect::<String>();
+    let mut s = &s2[..];
 
     debug!("integer_lit: {}, {:?}", s, suffix);
 
@@ -663,11 +600,11 @@ fn integer_lit(s: &str, suffix: Option<Symbol>, diag: Option<(Span, &Handler)>)
     let orig = s;
     let mut ty = ast::LitIntType::Unsuffixed;
 
-    if s.starts_with('0') && s.len() > 1 {
-        match s.as_bytes()[1] {
-            b'x' => base = 16,
-            b'o' => base = 8,
-            b'b' => base = 2,
+    if char_at(s, 0) == '0' && s.len() > 1 {
+        match char_at(s, 1) {
+            'x' => base = 16,
+            'o' => base = 8,
+            'b' => base = 2,
             _ => { }
         }
     }
@@ -785,7 +722,7 @@ mod tests {
     use attr::first_attr_value_str_by_name;
     use parse;
     use print::pprust::item_to_string;
-    use tokenstream::{DelimSpan, TokenTree};
+    use tokenstream::{self, DelimSpan, TokenTree};
     use util::parser_testing::string_to_stream;
     use util::parser_testing::{string_to_expr, string_to_item};
     use with_globals;
@@ -816,41 +753,42 @@ mod tests {
                     Some(&TokenTree::Token(_, token::Ident(name_macro_rules, false))),
                     Some(&TokenTree::Token(_, token::Not)),
                     Some(&TokenTree::Token(_, token::Ident(name_zip, false))),
-                    Some(&TokenTree::Delimited(_, macro_delim, ref macro_tts)),
+                    Some(&TokenTree::Delimited(_, ref macro_delimed)),
                 )
                 if name_macro_rules.name == "macro_rules"
                 && name_zip.name == "zip" => {
-                    let tts = &macro_tts.stream().trees().collect::<Vec<_>>();
+                    let tts = &macro_delimed.stream().trees().collect::<Vec<_>>();
                     match (tts.len(), tts.get(0), tts.get(1), tts.get(2)) {
                         (
                             3,
-                            Some(&TokenTree::Delimited(_, first_delim, ref first_tts)),
+                            Some(&TokenTree::Delimited(_, ref first_delimed)),
                             Some(&TokenTree::Token(_, token::FatArrow)),
-                            Some(&TokenTree::Delimited(_, second_delim, ref second_tts)),
+                            Some(&TokenTree::Delimited(_, ref second_delimed)),
                         )
-                        if macro_delim == token::Paren => {
-                            let tts = &first_tts.stream().trees().collect::<Vec<_>>();
+                        if macro_delimed.delim == token::Paren => {
+                            let tts = &first_delimed.stream().trees().collect::<Vec<_>>();
                             match (tts.len(), tts.get(0), tts.get(1)) {
                                 (
                                     2,
                                     Some(&TokenTree::Token(_, token::Dollar)),
                                     Some(&TokenTree::Token(_, token::Ident(ident, false))),
                                 )
-                                if first_delim == token::Paren && ident.name == "a" => {},
-                                _ => panic!("value 3: {:?} {:?}", first_delim, first_tts),
+                                if first_delimed.delim == token::Paren && ident.name == "a" => {},
+                                _ => panic!("value 3: {:?}", *first_delimed),
                             }
-                            let tts = &second_tts.stream().trees().collect::<Vec<_>>();
+                            let tts = &second_delimed.stream().trees().collect::<Vec<_>>();
                             match (tts.len(), tts.get(0), tts.get(1)) {
                                 (
                                     2,
                                     Some(&TokenTree::Token(_, token::Dollar)),
                                     Some(&TokenTree::Token(_, token::Ident(ident, false))),
                                 )
-                                if second_delim == token::Paren && ident.name == "a" => {},
-                                _ => panic!("value 4: {:?} {:?}", second_delim, second_tts),
+                                if second_delimed.delim == token::Paren
+                                && ident.name == "a" => {},
+                                _ => panic!("value 4: {:?}", *second_delimed),
                             }
                         },
-                        _ => panic!("value 2: {:?} {:?}", macro_delim, macro_tts),
+                        _ => panic!("value 2: {:?}", *macro_delimed),
                     }
                 },
                 _ => panic!("value: {:?}",tts),
@@ -868,24 +806,26 @@ mod tests {
                 TokenTree::Token(sp(3, 4), token::Ident(Ident::from_str("a"), false)).into(),
                 TokenTree::Delimited(
                     DelimSpan::from_pair(sp(5, 6), sp(13, 14)),
-                    token::DelimToken::Paren,
-                    TokenStream::concat(vec![
-                        TokenTree::Token(sp(6, 7),
-                                         token::Ident(Ident::from_str("b"), false)).into(),
-                        TokenTree::Token(sp(8, 9), token::Colon).into(),
-                        TokenTree::Token(sp(10, 13),
-                                         token::Ident(Ident::from_str("i32"), false)).into(),
-                    ]).into(),
-                ).into(),
+                    tokenstream::Delimited {
+                        delim: token::DelimToken::Paren,
+                        tts: TokenStream::concat(vec![
+                            TokenTree::Token(sp(6, 7),
+                                             token::Ident(Ident::from_str("b"), false)).into(),
+                            TokenTree::Token(sp(8, 9), token::Colon).into(),
+                            TokenTree::Token(sp(10, 13),
+                                             token::Ident(Ident::from_str("i32"), false)).into(),
+                        ]).into(),
+                    }).into(),
                 TokenTree::Delimited(
                     DelimSpan::from_pair(sp(15, 16), sp(20, 21)),
-                    token::DelimToken::Brace,
-                    TokenStream::concat(vec![
-                        TokenTree::Token(sp(17, 18),
-                                         token::Ident(Ident::from_str("b"), false)).into(),
-                        TokenTree::Token(sp(18, 19), token::Semi).into(),
-                    ]).into(),
-                ).into()
+                    tokenstream::Delimited {
+                        delim: token::DelimToken::Brace,
+                        tts: TokenStream::concat(vec![
+                            TokenTree::Token(sp(17, 18),
+                                             token::Ident(Ident::from_str("b"), false)).into(),
+                            TokenTree::Token(sp(18, 19), token::Semi).into(),
+                        ]).into(),
+                    }).into()
             ]);
 
             assert_eq!(tts, expected);
@@ -992,25 +932,23 @@ mod tests {
         with_globals(|| {
             let sess = ParseSess::new(FilePathMapping::empty());
 
-            let name_1 = FileName::Custom("crlf_source_1".to_string());
+            let name = FileName::Custom("source".to_string());
             let source = "/// doc comment\r\nfn foo() {}".to_string();
-            let item = parse_item_from_source_str(name_1, source, &sess)
+            let item = parse_item_from_source_str(name.clone(), source, &sess)
                 .unwrap().unwrap();
             let doc = first_attr_value_str_by_name(&item.attrs, "doc").unwrap();
             assert_eq!(doc, "/// doc comment");
 
-            let name_2 = FileName::Custom("crlf_source_2".to_string());
             let source = "/// doc comment\r\n/// line 2\r\nfn foo() {}".to_string();
-            let item = parse_item_from_source_str(name_2, source, &sess)
+            let item = parse_item_from_source_str(name.clone(), source, &sess)
                 .unwrap().unwrap();
             let docs = item.attrs.iter().filter(|a| a.path == "doc")
                         .map(|a| a.value_str().unwrap().to_string()).collect::<Vec<_>>();
             let b: &[_] = &["/// doc comment".to_string(), "/// line 2".to_string()];
             assert_eq!(&docs[..], b);
 
-            let name_3 = FileName::Custom("clrf_source_3".to_string());
             let source = "/** doc comment\r\n *  with CRLF */\r\nfn foo() {}".to_string();
-            let item = parse_item_from_source_str(name_3, source, &sess).unwrap().unwrap();
+            let item = parse_item_from_source_str(name, source, &sess).unwrap().unwrap();
             let doc = first_attr_value_str_by_name(&item.attrs, "doc").unwrap();
             assert_eq!(doc, "/** doc comment\n *  with CRLF */");
         });

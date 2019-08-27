@@ -36,11 +36,11 @@ pub enum CrateNum {
 }
 
 impl ::std::fmt::Debug for CrateNum {
-    fn fmt(&self, fmt: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+    fn fmt(&self, fmt: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         match self {
             CrateNum::Index(id) => write!(fmt, "crate{}", id.private),
             CrateNum::Invalid => write!(fmt, "invalid crate"),
-            CrateNum::BuiltinMacros => write!(fmt, "builtin macros crate"),
+            CrateNum::BuiltinMacros => write!(fmt, "bultin macros crate"),
             CrateNum::ReservedForIncrCompCache => write!(fmt, "crate for decoding incr comp cache"),
         }
     }
@@ -97,11 +97,11 @@ impl CrateNum {
 }
 
 impl fmt::Display for CrateNum {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             CrateNum::Index(id) => fmt::Display::fmt(&id.private, f),
             CrateNum::Invalid => write!(f, "invalid crate"),
-            CrateNum::BuiltinMacros => write!(f, "builtin macros crate"),
+            CrateNum::BuiltinMacros => write!(f, "bultin macros crate"),
             CrateNum::ReservedForIncrCompCache => write!(f, "crate for decoding incr comp cache"),
         }
     }
@@ -132,7 +132,7 @@ pub struct DefIndex(u32);
 pub const CRATE_DEF_INDEX: DefIndex = DefIndex(0);
 
 impl fmt::Debug for DefIndex {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f,
                "DefIndex({}:{})",
                self.address_space().index(),
@@ -224,9 +224,9 @@ pub struct DefId {
 }
 
 impl fmt::Debug for DefId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "DefId({}/{}:{}",
-               self.krate,
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "DefId({:?}/{}:{}",
+               self.krate.index(),
                self.index.address_space().index(),
                self.index.as_array_index())?;
 
@@ -288,7 +288,7 @@ impl LocalDefId {
 }
 
 impl fmt::Debug for LocalDefId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.to_def_id().fmt(f)
     }
 }

@@ -18,15 +18,9 @@ use rustc_data_structures::stable_hasher::{HashStable, StableHasher,
 #[derive(Copy, Clone, Debug, RustcEncodable, RustcDecodable)]
 pub enum SignalledError { SawSomeError, NoErrorsSeen }
 
-impl Default for SignalledError {
-    fn default() -> SignalledError {
-        SignalledError::NoErrorsSeen
-    }
-}
-
 impl_stable_hash_for!(enum self::SignalledError { SawSomeError, NoErrorsSeen });
 
-#[derive(Debug, Default, RustcEncodable, RustcDecodable)]
+#[derive(Debug, RustcEncodable, RustcDecodable)]
 pub struct BorrowCheckResult {
     pub used_mut_nodes: FxHashSet<HirId>,
     pub signalled_any_error: SignalledError,

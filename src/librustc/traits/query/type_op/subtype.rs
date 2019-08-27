@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use infer::canonical::{Canonical, Canonicalized, CanonicalizedQueryResponse, QueryResponse};
+use infer::canonical::{Canonical, Canonicalized, CanonicalizedQueryResult, QueryResult};
 use traits::query::Fallible;
 use ty::{ParamEnvAnd, Ty, TyCtxt};
 
@@ -28,7 +28,7 @@ impl<'tcx> Subtype<'tcx> {
 }
 
 impl<'gcx: 'tcx, 'tcx> super::QueryTypeOp<'gcx, 'tcx> for Subtype<'tcx> {
-    type QueryResponse = ();
+    type QueryResult = ();
 
     fn try_fast_path(_tcx: TyCtxt<'_, 'gcx, 'tcx>, key: &ParamEnvAnd<'tcx, Self>) -> Option<()> {
         if key.value.sub == key.value.sup {
@@ -41,13 +41,13 @@ impl<'gcx: 'tcx, 'tcx> super::QueryTypeOp<'gcx, 'tcx> for Subtype<'tcx> {
     fn perform_query(
         tcx: TyCtxt<'_, 'gcx, 'tcx>,
         canonicalized: Canonicalized<'gcx, ParamEnvAnd<'tcx, Self>>,
-    ) -> Fallible<CanonicalizedQueryResponse<'gcx, ()>> {
+    ) -> Fallible<CanonicalizedQueryResult<'gcx, ()>> {
         tcx.type_op_subtype(canonicalized)
     }
 
     fn shrink_to_tcx_lifetime(
-        v: &'a CanonicalizedQueryResponse<'gcx, ()>,
-    ) -> &'a Canonical<'tcx, QueryResponse<'tcx, ()>> {
+        v: &'a CanonicalizedQueryResult<'gcx, ()>,
+    ) -> &'a Canonical<'tcx, QueryResult<'tcx, ()>> {
         v
     }
 }

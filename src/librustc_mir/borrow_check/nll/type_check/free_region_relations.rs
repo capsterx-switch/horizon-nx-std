@@ -8,15 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use borrow_check::location::LocationTable;
+use borrow_check::nll::facts::AllFacts;
 use borrow_check::nll::type_check::constraint_conversion;
 use borrow_check::nll::type_check::{Locations, MirTypeckRegionConstraints};
 use borrow_check::nll::universal_regions::UniversalRegions;
 use borrow_check::nll::ToRegionVid;
+use borrow_check::nll::constraints::ConstraintCategory;
 use rustc::infer::canonical::QueryRegionConstraint;
 use rustc::infer::outlives::free_region_map::FreeRegionRelations;
 use rustc::infer::region_constraints::GenericKind;
 use rustc::infer::InferCtxt;
-use rustc::mir::ConstraintCategory;
 use rustc::traits::query::outlives_bounds::{self, OutlivesBound};
 use rustc::traits::query::type_op::{self, TypeOp};
 use rustc::ty::{self, RegionVid, Ty};
@@ -67,21 +69,25 @@ crate struct CreateResult<'tcx> {
 crate fn create(
     infcx: &InferCtxt<'_, '_, 'tcx>,
     param_env: ty::ParamEnv<'tcx>,
+    location_table: &LocationTable,
     implicit_region_bound: Option<ty::Region<'tcx>>,
     universal_regions: &Rc<UniversalRegions<'tcx>>,
     constraints: &mut MirTypeckRegionConstraints<'tcx>,
+    all_facts: &mut Option<AllFacts>,
 ) -> CreateResult<'tcx> {
     UniversalRegionRelationsBuilder {
         infcx,
         param_env,
         implicit_region_bound,
         constraints,
+        location_table,
+        all_facts,
         universal_regions: universal_regions.clone(),
         region_bound_pairs: Vec::new(),
         relations: UniversalRegionRelations {
             universal_regions: universal_regions.clone(),
-            outlives: Default::default(),
-            inverse_outlives: Default::default(),
+            outlives: TransitiveRelation::new(),
+            inverse_outlives: TransitiveRelation::new(),
         },
     }.create()
 }
@@ -204,9 +210,11 @@ impl UniversalRegionRelations<'tcx> {
 struct UniversalRegionRelationsBuilder<'this, 'gcx: 'tcx, 'tcx: 'this> {
     infcx: &'this InferCtxt<'this, 'gcx, 'tcx>,
     param_env: ty::ParamEnv<'tcx>,
+    location_table: &'this LocationTable,
     universal_regions: Rc<UniversalRegions<'tcx>>,
     implicit_region_bound: Option<ty::Region<'tcx>>,
     constraints: &'this mut MirTypeckRegionConstraints<'tcx>,
+    all_facts: &'this mut Option<AllFacts>,
 
     // outputs:
     relations: UniversalRegionRelations<'tcx>,
@@ -271,14 +279,17 @@ impl UniversalRegionRelationsBuilder<'cx, 'gcx, 'tcx> {
 
         for data in constraint_sets {
             constraint_conversion::ConstraintConversion::new(
-                self.infcx,
+                self.infcx.tcx,
                 &self.universal_regions,
+                &self.location_table,
                 &self.region_bound_pairs,
                 self.implicit_region_bound,
                 self.param_env,
                 Locations::All(DUMMY_SP),
                 ConstraintCategory::Internal,
-                &mut self.constraints,
+                &mut self.constraints.outlives_constraints,
+                &mut self.constraints.type_tests,
+                &mut self.all_facts,
             ).convert_all(&data);
         }
 

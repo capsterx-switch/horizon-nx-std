@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use super::graphviz::write_mir_fn_graphviz;
 use transform::MirSource;
 
-const INDENT: &str = "    ";
+const INDENT: &'static str = "    ";
 /// Alignment for lining up comments following MIR statements
 pub(crate) const ALIGN: usize = 40;
 
@@ -193,7 +193,7 @@ fn dump_path(
     let mut file_path = PathBuf::new();
     file_path.push(Path::new(&tcx.sess.opts.debugging_opts.dump_mir_dir));
 
-    let item_name = tcx.hir()
+    let item_name = tcx.hir
         .def_path(source.def_id)
         .to_filename_friendly_no_crate();
 
@@ -502,7 +502,7 @@ fn write_scope_tree(
                 local,
                 var.ty
             );
-            for user_ty in var.user_ty.projections() {
+            if let Some(user_ty) = var.user_ty {
                 write!(indented_var, " as {:?}", user_ty).unwrap();
             }
             indented_var.push_str(";");
@@ -536,7 +536,7 @@ pub fn write_mir_intro<'a, 'gcx, 'tcx>(
     writeln!(w, "{{")?;
 
     // construct a scope tree and write it out
-    let mut scope_tree: FxHashMap<SourceScope, Vec<SourceScope>> = Default::default();
+    let mut scope_tree: FxHashMap<SourceScope, Vec<SourceScope>> = FxHashMap();
     for (index, scope_data) in mir.source_scopes.iter().enumerate() {
         if let Some(parent) = scope_data.parent_scope {
             scope_tree
@@ -569,8 +569,8 @@ pub fn write_mir_intro<'a, 'gcx, 'tcx>(
 }
 
 fn write_mir_sig(tcx: TyCtxt, src: MirSource, mir: &Mir, w: &mut dyn Write) -> io::Result<()> {
-    let id = tcx.hir().as_local_node_id(src.def_id).unwrap();
-    let body_owner_kind = tcx.hir().body_owner_kind(id);
+    let id = tcx.hir.as_local_node_id(src.def_id).unwrap();
+    let body_owner_kind = tcx.hir.body_owner_kind(id);
     match (body_owner_kind, src.promoted) {
         (_, Some(i)) => write!(w, "{:?} in", i)?,
         (hir::BodyOwnerKind::Fn, _) => write!(w, "fn")?,

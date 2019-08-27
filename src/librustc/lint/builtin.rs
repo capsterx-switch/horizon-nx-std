@@ -174,7 +174,7 @@ declare_lint! {
 declare_lint! {
     pub LEGACY_DIRECTORY_OWNERSHIP,
     Deny,
-    "non-inline, non-`#[path]` modules (e.g., `mod foo;`) were erroneously allowed in some files \
+    "non-inline, non-`#[path]` modules (e.g. `mod foo;`) were erroneously allowed in some files \
      not named `mod.rs`"
 }
 
@@ -231,12 +231,6 @@ declare_lint! {
     pub UNUSED_MUT,
     Warn,
     "detect mut variables which don't need to be mutable"
-}
-
-declare_lint! {
-    pub UNCONDITIONAL_RECURSION,
-    Warn,
-    "functions that cannot return without calling themselves"
 }
 
 declare_lint! {
@@ -301,6 +295,12 @@ declare_lint! {
 }
 
 declare_lint! {
+    pub DUPLICATE_ASSOCIATED_TYPE_BINDINGS,
+    Warn,
+    "warns about duplicate associated type bindings in generics"
+}
+
+declare_lint! {
     pub DUPLICATE_MACRO_EXPORTS,
     Deny,
     "detects duplicate macro exports"
@@ -310,18 +310,6 @@ declare_lint! {
     pub INTRA_DOC_LINK_RESOLUTION_FAILURE,
     Warn,
     "warn about documentation intra links resolution failure"
-}
-
-declare_lint! {
-    pub MISSING_DOC_CODE_EXAMPLES,
-    Allow,
-    "warn about missing code example in an item's documentation"
-}
-
-declare_lint! {
-    pub PRIVATE_DOC_TESTS,
-    Allow,
-    "warn about doc test in private item"
 }
 
 declare_lint! {
@@ -350,12 +338,6 @@ declare_lint! {
      cannot be referred to by absolute paths"
 }
 
-declare_lint! {
-    pub EXPLICIT_OUTLIVES_REQUIREMENTS,
-    Allow,
-    "outlives requirements can be inferred"
-}
-
 /// Some lints that are buffered from `libsyntax`. See `syntax::early_buffered_lints`.
 pub mod parser {
     declare_lint! {
@@ -366,7 +348,7 @@ pub mod parser {
 }
 
 /// Does nothing as a lint pass, but registers some `Lint`s
-/// that are used by other parts of the compiler.
+/// which are used by other parts of the compiler.
 #[derive(Copy, Clone)]
 pub struct HardwiredLints;
 
@@ -408,7 +390,6 @@ impl LintPass for HardwiredLints {
             DEPRECATED,
             UNUSED_UNSAFE,
             UNUSED_MUT,
-            UNCONDITIONAL_RECURSION,
             SINGLE_USE_LIFETIMES,
             UNUSED_LIFETIMES,
             UNUSED_LABELS,
@@ -418,10 +399,9 @@ impl LintPass for HardwiredLints {
             ABSOLUTE_PATHS_NOT_STARTING_WITH_CRATE,
             UNSTABLE_NAME_COLLISIONS,
             IRREFUTABLE_LET_PATTERNS,
+            DUPLICATE_ASSOCIATED_TYPE_BINDINGS,
             DUPLICATE_MACRO_EXPORTS,
             INTRA_DOC_LINK_RESOLUTION_FAILURE,
-            MISSING_DOC_CODE_EXAMPLES,
-            PRIVATE_DOC_TESTS,
             WHERE_CLAUSES_OBJECT_SAFETY,
             PROC_MACRO_DERIVE_RESOLUTION_FALLBACK,
             MACRO_USE_EXTERN_CRATE,
@@ -446,7 +426,7 @@ pub enum BuiltinLintDiagnostics {
 }
 
 impl BuiltinLintDiagnostics {
-    pub fn run(self, sess: &Session, db: &mut DiagnosticBuilder<'_>) {
+    pub fn run(self, sess: &Session, db: &mut DiagnosticBuilder) {
         match self {
             BuiltinLintDiagnostics::Normal => (),
             BuiltinLintDiagnostics::BareTraitObject(span, is_global) => {
@@ -463,7 +443,7 @@ impl BuiltinLintDiagnostics {
                     Ok(ref s) => {
                         // FIXME(Manishearth) ideally the emitting code
                         // can tell us whether or not this is global
-                        let opt_colon = if s.trim_start().starts_with("::") {
+                        let opt_colon = if s.trim_left().starts_with("::") {
                             ""
                         } else {
                             "::"

@@ -1,13 +1,3 @@
-// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Native threads.
 //!
 //! ## The threading model
@@ -205,7 +195,7 @@ pub use self::local::{LocalKey, AccessError};
 // where available, but both are needed.
 
 #[unstable(feature = "libstd_thread_internals", issue = "0")]
-#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+#[cfg(target_arch = "wasm32")]
 #[doc(hidden)] pub use self::local::statik::Key as __StaticLocalKeyInner;
 #[unstable(feature = "libstd_thread_internals", issue = "0")]
 #[cfg(target_thread_local)]
@@ -235,7 +225,7 @@ pub use self::local::{LocalKey, AccessError};
 ///
 /// You may want to use [`spawn`] instead of [`thread::spawn`], when you want
 /// to recover from a failure to launch a thread, indeed the free function will
-/// panic where the `Builder` method will return a [`io::Result`].
+/// panick where the `Builder` method will return a [`io::Result`].
 ///
 /// # Examples
 ///
@@ -328,7 +318,7 @@ impl Builder {
     /// Sets the size of the stack (in bytes) for the new thread.
     ///
     /// The actual stack size may be greater than this value if
-    /// the platform specifies a minimal stack size.
+    /// the platform specifies minimal stack size.
     ///
     /// For more information about the stack size for threads, see
     /// [this module-level documentation][stack-size].
@@ -375,6 +365,7 @@ impl Builder {
     /// # Examples
     ///
     /// ```
+    /// #![feature(thread_spawn_unchecked)]
     /// use std::thread;
     ///
     /// let builder = thread::Builder::new();
@@ -473,14 +464,14 @@ impl Builder {
                 imp::Thread::set_name(name);
             }
 
-            thread_info::set(imp::guard::current(), their_thread);
-            #[cfg(feature = "backtrace")]
-            let try_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                ::sys_common::backtrace::__rust_begin_short_backtrace(f)
-            }));
-            #[cfg(not(feature = "backtrace"))]
-            let try_result = panic::catch_unwind(panic::AssertUnwindSafe(f));
-            *their_packet.get() = Some(try_result);
+                thread_info::set(imp::guard::current(), their_thread);
+                #[cfg(feature = "backtrace")]
+                let try_result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                    ::sys_common::backtrace::__rust_begin_short_backtrace(f)
+                }));
+                #[cfg(not(feature = "backtrace"))]
+                let try_result = panic::catch_unwind(panic::AssertUnwindSafe(f));
+                *their_packet.get() = Some(try_result);
         };
 
         Ok(JoinHandle(JoinInner {
@@ -657,7 +648,7 @@ pub fn current() -> Thread {
 /// Thus the pattern of `yield`ing after a failed poll is rather common when
 /// implementing low-level shared resources or synchronization primitives.
 ///
-/// However programmers will usually prefer to use [`channel`]s, [`Condvar`]s,
+/// However programmers will usually prefer to use, [`channel`]s, [`Condvar`]s,
 /// [`Mutex`]es or [`join`] for their synchronization routines, as they avoid
 /// thinking about thread scheduling.
 ///
@@ -731,17 +722,15 @@ pub fn panicking() -> bool {
     panicking::panicking()
 }
 
-/// Puts the current thread to sleep for at least the specified amount of time.
+/// Puts the current thread to sleep for the specified amount of time.
 ///
 /// The thread may sleep longer than the duration specified due to scheduling
-/// specifics or platform-dependent functionality. It will never sleep less.
+/// specifics or platform-dependent functionality.
 ///
 /// # Platform-specific behavior
 ///
-/// On Unix platforms, the underlying syscall may be interrupted by a
-/// spurious wakeup or signal handler. To ensure the sleep occurs for at least
-/// the specified duration, this function may invoke that system call multiple
-/// times.
+/// On Unix platforms this function will not return early due to a
+/// signal being received or a spurious wakeup.
 ///
 /// # Examples
 ///
@@ -757,19 +746,17 @@ pub fn sleep_ms(ms: u32) {
     sleep(Duration::from_millis(ms as u64))
 }
 
-/// Puts the current thread to sleep for at least the specified amount of time.
+/// Puts the current thread to sleep for the specified amount of time.
 ///
 /// The thread may sleep longer than the duration specified due to scheduling
-/// specifics or platform-dependent functionality. It will never sleep less.
+/// specifics or platform-dependent functionality.
 ///
 /// # Platform-specific behavior
 ///
-/// On Unix platforms, the underlying syscall may be interrupted by a
-/// spurious wakeup or signal handler. To ensure the sleep occurs for at least
-/// the specified duration, this function may invoke that system call multiple
-/// times.
-/// Platforms which do not support nanosecond precision for sleeping will
-/// have `dur` rounded up to the nearest granularity of time they can sleep for.
+/// On Unix platforms this function will not return early due to a
+/// signal being received or a spurious wakeup. Platforms which do not support
+/// nanosecond precision for sleeping will have `dur` rounded up to the nearest
+/// granularity of time they can sleep for.
 ///
 /// # Examples
 ///
@@ -822,14 +809,9 @@ const NOTIFIED: usize = 2;
 /// In other words, each [`Thread`] acts a bit like a spinlock that can be
 /// locked and unlocked using `park` and `unpark`.
 ///
-/// Notice that being unblocked does not imply any synchronization with someone
-/// that unparked this thread, it could also be spurious.
-/// For example, it would be a valid, but inefficient, implementation to make both [`park`] and
-/// [`unpark`] return immediately without doing anything.
-///
 /// The API is typically used by acquiring a handle to the current thread,
 /// placing that handle in a shared data structure so that other threads can
-/// find it, and then `park`ing in a loop. When some desired condition is met, another
+/// find it, and then `park`ing. When some desired condition is met, another
 /// thread calls [`unpark`] on the handle.
 ///
 /// The motivation for this design is twofold:
@@ -844,33 +826,21 @@ const NOTIFIED: usize = 2;
 ///
 /// ```
 /// use std::thread;
-/// use std::sync::{Arc, atomic::{Ordering, AtomicBool}};
 /// use std::time::Duration;
 ///
-/// let flag = Arc::new(AtomicBool::new(false));
-/// let flag2 = Arc::clone(&flag);
-///
-/// let parked_thread = thread::spawn(move || {
-///     // We want to wait until the flag is set.  We *could* just spin, but using
-///     // park/unpark is more efficient.
-///     while !flag2.load(Ordering::Acquire) {
+/// let parked_thread = thread::Builder::new()
+///     .spawn(|| {
 ///         println!("Parking thread");
 ///         thread::park();
-///         // We *could* get here spuriously, i.e., way before the 10ms below are over!
-///         // But that is no problem, we are in a loop until the flag is set anyway.
 ///         println!("Thread unparked");
-///     }
-///     println!("Flag received");
-/// });
+///     })
+///     .unwrap();
 ///
 /// // Let some time pass for the thread to be spawned.
 /// thread::sleep(Duration::from_millis(10));
 ///
-/// // Set the flag, and let the thread wake up.
 /// // There is no race condition here, if `unpark`
 /// // happens first, `park` will return immediately.
-/// // Hence there is no risk of a deadlock.
-/// flag.store(true, Ordering::Release);
 /// println!("Unpark the thread");
 /// parked_thread.thread().unpark();
 ///

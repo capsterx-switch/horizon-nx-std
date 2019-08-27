@@ -9,21 +9,20 @@
 // except according to those terms.
 
 //! An "interner" is a data structure that associates values with usize tags and
-//! allows bidirectional lookup; i.e., given a value, one can easily find the
+//! allows bidirectional lookup; i.e. given a value, one can easily find the
 //! type, and vice versa.
 
-use arena::DroplessArena;
-use rustc_data_structures::fx::FxHashMap;
-use rustc_data_structures::indexed_vec::Idx;
-use serialize::{Decodable, Decoder, Encodable, Encoder};
+use edition::Edition;
+use hygiene::SyntaxContext;
+use {Span, DUMMY_SP, GLOBALS};
 
+use rustc_data_structures::fx::FxHashMap;
+use arena::DroplessArena;
+use serialize::{Decodable, Decoder, Encodable, Encoder};
 use std::fmt;
 use std::str;
 use std::cmp::{PartialEq, Ordering, PartialOrd, Ord};
 use std::hash::{Hash, Hasher};
-
-use hygiene::SyntaxContext;
-use {Span, DUMMY_SP, GLOBALS};
 
 #[derive(Copy, Clone, Eq)]
 pub struct Ident {
@@ -36,7 +35,6 @@ impl Ident {
     pub const fn new(name: Symbol, span: Span) -> Ident {
         Ident { name, span }
     }
-
     #[inline]
     pub const fn with_empty_ctxt(name: Symbol) -> Ident {
         Ident::new(name, DUMMY_SP)
@@ -58,12 +56,12 @@ impl Ident {
     }
 
     pub fn without_first_quote(self) -> Ident {
-        Ident::new(Symbol::intern(self.as_str().trim_start_matches('\'')), self.span)
+        Ident::new(Symbol::intern(self.as_str().trim_left_matches('\'')), self.span)
     }
 
     /// "Normalize" ident for use in comparisons using "item hygiene".
     /// Identifiers with same string value become same if they came from the same "modern" macro
-    /// (e.g., `macro` item, but not `macro_rules` item) and stay different if they came from
+    /// (e.g. `macro` item, but not `macro_rules` item) and stay different if they came from
     /// different "modern" macros.
     /// Technically, this operation strips all non-opaque marks from ident's syntactic context.
     pub fn modern(self) -> Ident {
@@ -72,7 +70,7 @@ impl Ident {
 
     /// "Normalize" ident for use in comparisons using "local variable hygiene".
     /// Identifiers with same string value become same if they came from the same non-transparent
-    /// macro (e.g., `macro` or `macro_rules!` items) and stay different if they came from different
+    /// macro (e.g. `macro` or `macro_rules!` items) and stay different if they came from different
     /// non-transparent macros.
     /// Technically, this operation strips all transparent marks from ident's syntactic context.
     pub fn modern_and_legacy(self) -> Ident {
@@ -81,10 +79,6 @@ impl Ident {
 
     pub fn gensym(self) -> Ident {
         Ident::new(self.name.gensymed(), self.span)
-    }
-
-    pub fn gensym_if_underscore(self) -> Ident {
-        if self.name == keywords::Underscore.name() { self.gensym() } else { self }
     }
 
     pub fn as_str(self) -> LocalInternedString {
@@ -125,7 +119,7 @@ impl Encodable for Ident {
     fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
         if self.span.ctxt().modern() == SyntaxContext::empty() {
             s.emit_str(&self.as_str())
-        } else { // FIXME(jseyfried): intercrate hygiene
+        } else { // FIXME(jseyfried) intercrate hygiene
             let mut string = "#".to_owned();
             string.push_str(&self.as_str());
             s.emit_str(&string)
@@ -138,27 +132,18 @@ impl Decodable for Ident {
         let string = d.read_str()?;
         Ok(if !string.starts_with('#') {
             Ident::from_str(&string)
-        } else { // FIXME(jseyfried): intercrate hygiene
+        } else { // FIXME(jseyfried) intercrate hygiene
             Ident::with_empty_ctxt(Symbol::gensym(&string[1..]))
         })
     }
 }
 
-/// A symbol is an interned or gensymed string. The use of newtype_index! means
-/// that Option<Symbol> only takes up 4 bytes, because newtype_index! reserves
-/// the last 256 values for tagging purposes.
-///
-/// Note that Symbol cannot be a newtype_index! directly because it implements
-/// fmt::Debug, Encodable, and Decodable in special ways.
+/// A symbol is an interned or gensymed string.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Symbol(SymbolIndex);
-
-newtype_index! {
-    pub struct SymbolIndex { .. }
-}
+pub struct Symbol(u32);
 
 // The interner is pointed to by a thread local value which is only set on the main thread
-// with parallelization is disabled. So we don't allow `Symbol` to transfer between threads
+// with parallelization is disabled. So we don't allow Symbol to transfer between threads
 // to avoid panics and other errors, even though it would be memory safe to do so.
 #[cfg(not(parallel_queries))]
 impl !Send for Symbol { }
@@ -166,10 +151,6 @@ impl !Send for Symbol { }
 impl !Sync for Symbol { }
 
 impl Symbol {
-    const fn new(n: u32) -> Self {
-        Symbol(SymbolIndex::from_u32_const(n))
-    }
-
     /// Maps a string to its interned representation.
     pub fn intern(string: &str) -> Self {
         with_interner(|interner| interner.intern(string))
@@ -179,7 +160,7 @@ impl Symbol {
         with_interner(|interner| interner.interned(self))
     }
 
-    /// Gensyms a new usize, using the current interner.
+    /// gensym's a new usize, using the current interner.
     pub fn gensym(string: &str) -> Self {
         with_interner(|interner| interner.gensym(string))
     }
@@ -203,7 +184,7 @@ impl Symbol {
     }
 
     pub fn as_u32(self) -> u32 {
-        self.0.as_u32()
+        self.0
     }
 }
 
@@ -211,7 +192,7 @@ impl fmt::Debug for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let is_gensymed = with_interner(|interner| interner.is_gensymed(*self));
         if is_gensymed {
-            write!(f, "{}({:?})", self, self.0)
+            write!(f, "{}({})", self, self.0)
         } else {
             write!(f, "{}", self)
         }
@@ -242,11 +223,7 @@ impl<T: ::std::ops::Deref<Target=str>> PartialEq<T> for Symbol {
     }
 }
 
-// The `&'static str`s in this type actually point into the arena.
-//
-// Note that normal symbols are indexed upward from 0, and gensyms are indexed
-// downward from SymbolIndex::MAX_AS_U32.
-#[derive(Default)]
+// The &'static strs in this type actually point into the arena
 pub struct Interner {
     arena: DroplessArena,
     names: FxHashMap<&'static str, Symbol>,
@@ -255,12 +232,21 @@ pub struct Interner {
 }
 
 impl Interner {
+    pub fn new() -> Self {
+        Interner {
+            arena: DroplessArena::new(),
+            names: Default::default(),
+            strings: Default::default(),
+            gensyms: Default::default(),
+        }
+    }
+
     fn prefill(init: &[&str]) -> Self {
-        let mut this = Interner::default();
+        let mut this = Interner::new();
         for &string in init {
             if string == "" {
-                // We can't allocate empty strings in the arena, so handle this here.
-                let name = Symbol::new(this.strings.len() as u32);
+                // We can't allocate empty strings in the arena, so handle this here
+                let name = Symbol(this.strings.len() as u32);
                 this.names.insert("", name);
                 this.strings.push("");
             } else {
@@ -275,15 +261,14 @@ impl Interner {
             return name;
         }
 
-        let name = Symbol::new(self.strings.len() as u32);
+        let name = Symbol(self.strings.len() as u32);
 
-        // `from_utf8_unchecked` is safe since we just allocated a `&str` which is known to be
-        // UTF-8.
+        // from_utf8_unchecked is safe since we just allocated a &str which is known to be utf8
         let string: &str = unsafe {
             str::from_utf8_unchecked(self.arena.alloc_slice(string.as_bytes()))
         };
-        // It is safe to extend the arena allocation to `'static` because we only access
-        // these while the arena is still alive.
+        // It is safe to extend the arena allocation to 'static because we only access
+        // these while the arena is still alive
         let string: &'static str =  unsafe {
             &*(string as *const str)
         };
@@ -293,10 +278,10 @@ impl Interner {
     }
 
     pub fn interned(&self, symbol: Symbol) -> Symbol {
-        if (symbol.0.as_usize()) < self.strings.len() {
+        if (symbol.0 as usize) < self.strings.len() {
             symbol
         } else {
-            self.interned(self.gensyms[(SymbolIndex::MAX_AS_U32 - symbol.0.as_u32()) as usize])
+            self.interned(self.gensyms[(!0 - symbol.0) as usize])
         }
     }
 
@@ -307,17 +292,17 @@ impl Interner {
 
     fn gensymed(&mut self, symbol: Symbol) -> Symbol {
         self.gensyms.push(symbol);
-        Symbol::new(SymbolIndex::MAX_AS_U32 - self.gensyms.len() as u32 + 1)
+        Symbol(!0 - self.gensyms.len() as u32 + 1)
     }
 
     fn is_gensymed(&mut self, symbol: Symbol) -> bool {
-        symbol.0.as_usize() >= self.strings.len()
+        symbol.0 as usize >= self.strings.len()
     }
 
     pub fn get(&self, symbol: Symbol) -> &str {
-        match self.strings.get(symbol.0.as_usize()) {
+        match self.strings.get(symbol.0 as usize) {
             Some(string) => string,
-            None => self.get(self.gensyms[(SymbolIndex::MAX_AS_U32 - symbol.0.as_u32()) as usize]),
+            None => self.get(self.gensyms[(!0 - symbol.0) as usize]),
         }
     }
 }
@@ -341,7 +326,7 @@ macro_rules! declare_keywords {(
         $(
             #[allow(non_upper_case_globals)]
             pub const $konst: Keyword = Keyword {
-                ident: Ident::with_empty_ctxt(super::Symbol::new($index))
+                ident: Ident::with_empty_ctxt(super::Symbol($index))
             };
         )*
 
@@ -364,7 +349,7 @@ macro_rules! declare_keywords {(
     }
 }}
 
-// N.B., leaving holes in the ident table is bad! a different ident will get
+// NB: leaving holes in the ident table is bad! a different ident will get
 // interned with the id from the hole, but it will be between the min and max
 // of the reserved words, and thus tagged as "reserved".
 // After modifying this list adjust `is_special`, `is_used_keyword`/`is_unused_keyword`,
@@ -373,11 +358,11 @@ declare_keywords! {
     // Special reserved identifiers used internally for elided lifetimes,
     // unnamed method parameters, crate root module, error recovery etc.
     (0,  Invalid,            "")
-    (1,  PathRoot,           "{{root}}")
+    (1,  CrateRoot,          "{{root}}")
     (2,  DollarCrate,        "$crate")
     (3,  Underscore,         "_")
 
-    // Keywords that are used in stable Rust.
+    // Keywords used in the language.
     (4,  As,                 "as")
     (5,  Box,                "box")
     (6,  Break,              "break")
@@ -402,8 +387,8 @@ declare_keywords! {
     (25, Pub,                "pub")
     (26, Ref,                "ref")
     (27, Return,             "return")
-    (28, SelfLower,          "self")
-    (29, SelfUpper,          "Self")
+    (28, SelfValue,          "self")
+    (29, SelfType,           "Self")
     (30, Static,             "static")
     (31, Struct,             "struct")
     (32, Super,              "super")
@@ -415,7 +400,7 @@ declare_keywords! {
     (38, Where,              "where")
     (39, While,              "while")
 
-    // Keywords that are used in unstable Rust or reserved for future use.
+    // Keywords reserved for future use.
     (40, Abstract,           "abstract")
     (41, Become,             "become")
     (42, Do,                 "do")
@@ -428,11 +413,9 @@ declare_keywords! {
     (49, Virtual,            "virtual")
     (50, Yield,              "yield")
 
-    // Edition-specific keywords that are used in stable Rust.
-    (51, Dyn,                "dyn") // >= 2018 Edition only
-
-    // Edition-specific keywords that are used in unstable Rust or reserved for future use.
-    (52, Async,              "async") // >= 2018 Edition only
+    // Edition-specific keywords reserved for future use.
+    (51, Async,              "async") // >= 2018 Edition only
+    (52, Dyn,                "dyn") // >= 2018 Edition only
     (53, Try,                "try") // >= 2018 Edition only
 
     // Special lifetime names
@@ -443,22 +426,18 @@ declare_keywords! {
     (56, Auto,               "auto")
     (57, Catch,              "catch")
     (58, Default,            "default")
-    (59, Existential,        "existential")
-    (60, Union,              "union")
+    (59, Union,              "union")
+    (60, Existential,        "existential")
 }
 
 impl Symbol {
-    fn is_used_keyword_2018(self) -> bool {
-        self == keywords::Dyn.name()
-    }
-
     fn is_unused_keyword_2018(self) -> bool {
         self >= keywords::Async.name() && self <= keywords::Try.name()
     }
 }
 
 impl Ident {
-    // Returns `true` for reserved identifiers used internally for elided lifetimes,
+    // Returns true for reserved identifiers used internally for elided lifetimes,
     // unnamed method parameters, crate root module, error recovery etc.
     pub fn is_special(self) -> bool {
         self.name <= keywords::Underscore.name()
@@ -466,16 +445,14 @@ impl Ident {
 
     /// Returns `true` if the token is a keyword used in the language.
     pub fn is_used_keyword(self) -> bool {
-        // Note: `span.edition()` is relatively expensive, don't call it unless necessary.
-        self.name >= keywords::As.name() && self.name <= keywords::While.name() ||
-        self.name.is_used_keyword_2018() && self.span.rust_2018()
+        self.name >= keywords::As.name() && self.name <= keywords::While.name()
     }
 
     /// Returns `true` if the token is a keyword reserved for possible future use.
     pub fn is_unused_keyword(self) -> bool {
         // Note: `span.edition()` is relatively expensive, don't call it unless necessary.
         self.name >= keywords::Abstract.name() && self.name <= keywords::Yield.name() ||
-        self.name.is_unused_keyword_2018() && self.span.rust_2018()
+        self.name.is_unused_keyword_2018() && self.span.edition() == Edition::Edition2018
     }
 
     /// Returns `true` if the token is either a special identifier or a keyword.
@@ -486,18 +463,18 @@ impl Ident {
     /// A keyword or reserved identifier that can be used as a path segment.
     pub fn is_path_segment_keyword(self) -> bool {
         self.name == keywords::Super.name() ||
-        self.name == keywords::SelfLower.name() ||
-        self.name == keywords::SelfUpper.name() ||
+        self.name == keywords::SelfValue.name() ||
+        self.name == keywords::SelfType.name() ||
         self.name == keywords::Extern.name() ||
         self.name == keywords::Crate.name() ||
-        self.name == keywords::PathRoot.name() ||
+        self.name == keywords::CrateRoot.name() ||
         self.name == keywords::DollarCrate.name()
     }
 
     // We see this identifier in a normal identifier position, like variable name or a type.
     // How was it written originally? Did it use the raw form? Let's try to guess.
     pub fn is_raw_guess(self) -> bool {
-        self.name != keywords::Invalid.name() && self.name != keywords::Underscore.name() &&
+        self.name != keywords::Invalid.name() &&
         self.is_reserved() && !self.is_path_segment_keyword()
     }
 }
@@ -511,8 +488,8 @@ fn with_interner<T, F: FnOnce(&mut Interner) -> T>(f: F) -> T {
 /// Represents a string stored in the interner. Because the interner outlives any thread
 /// which uses this type, we can safely treat `string` which points to interner data,
 /// as an immortal string, as long as this type never crosses between threads.
-// FIXME: ensure that the interner outlives any thread which uses `LocalInternedString`,
-// by creating a new thread right after constructing the interner.
+// FIXME: Ensure that the interner outlives any thread which uses LocalInternedString,
+//        by creating a new thread right after constructing the interner
 #[derive(Clone, Copy, Hash, PartialOrd, Eq, Ord)]
 pub struct LocalInternedString {
     string: &'static str,
@@ -523,10 +500,6 @@ impl LocalInternedString {
         InternedString {
             symbol: Symbol::intern(self.string)
         }
-    }
-
-    pub fn get(&self) -> &'static str {
-        self.string
     }
 }
 
@@ -601,7 +574,7 @@ impl Encodable for LocalInternedString {
     }
 }
 
-/// Represents a string stored in the string interner.
+/// Represents a string stored in the string interner
 #[derive(Clone, Copy, Eq)]
 pub struct InternedString {
     symbol: Symbol,
@@ -724,21 +697,21 @@ mod tests {
 
     #[test]
     fn interner_tests() {
-        let mut i: Interner = Interner::default();
+        let mut i: Interner = Interner::new();
         // first one is zero:
-        assert_eq!(i.intern("dog"), Symbol::new(0));
+        assert_eq!(i.intern("dog"), Symbol(0));
         // re-use gets the same entry:
-        assert_eq!(i.intern("dog"), Symbol::new(0));
+        assert_eq!(i.intern("dog"), Symbol(0));
         // different string gets a different #:
-        assert_eq!(i.intern("cat"), Symbol::new(1));
-        assert_eq!(i.intern("cat"), Symbol::new(1));
+        assert_eq!(i.intern("cat"), Symbol(1));
+        assert_eq!(i.intern("cat"), Symbol(1));
         // dog is still at zero
-        assert_eq!(i.intern("dog"), Symbol::new(0));
-        assert_eq!(i.gensym("zebra"), Symbol::new(SymbolIndex::MAX_AS_U32));
-        // gensym of same string gets new number:
-        assert_eq!(i.gensym("zebra"), Symbol::new(SymbolIndex::MAX_AS_U32 - 1));
+        assert_eq!(i.intern("dog"), Symbol(0));
+        assert_eq!(i.gensym("zebra"), Symbol(4294967295));
+        // gensym of same string gets new number :
+        assert_eq!(i.gensym("zebra"), Symbol(4294967294));
         // gensym of *existing* string gets new number:
-        assert_eq!(i.gensym("dog"), Symbol::new(SymbolIndex::MAX_AS_U32 - 2));
+        assert_eq!(i.gensym("dog"), Symbol(4294967293));
     }
 
     #[test]

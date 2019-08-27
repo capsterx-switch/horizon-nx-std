@@ -21,15 +21,16 @@
       html_root_url = "https://doc.rust-lang.org/nightly/")]
 
 #![feature(in_band_lifetimes)]
+#![feature(impl_header_lifetime_elision)]
 #![feature(unboxed_closures)]
 #![feature(fn_traits)]
 #![feature(unsize)]
 #![feature(specialization)]
 #![feature(optin_builtin_traits)]
-#![feature(nll)]
+#![cfg_attr(stage0, feature(macro_vis_matcher))]
+#![cfg_attr(not(stage0), feature(nll))]
 #![feature(allow_internal_unstable)]
 #![feature(vec_resize_with)]
-#![feature(hash_raw_entry)]
 
 #![cfg_attr(unix, feature(libc))]
 #![cfg_attr(test, feature(test))]
@@ -49,7 +50,6 @@ extern crate rustc_rayon as rayon;
 extern crate rustc_rayon_core as rayon_core;
 extern crate rustc_hash;
 extern crate serialize;
-extern crate graphviz;
 extern crate smallvec;
 
 // See librustc_cratesio_shim/Cargo.toml for a comment explaining this.
@@ -58,7 +58,6 @@ extern crate rustc_cratesio_shim;
 
 pub use rustc_serialize::hex::ToHex;
 
-pub mod macros;
 pub mod svh;
 pub mod base_n;
 pub mod bit_set;
@@ -67,7 +66,6 @@ pub mod flock;
 pub mod fx;
 pub mod graph;
 pub mod indexed_vec;
-pub mod interner;
 pub mod obligation_forest;
 pub mod owning_ref;
 pub mod ptr_key;
@@ -81,6 +79,7 @@ pub mod sync;
 pub mod tiny_list;
 pub mod thin_vec;
 pub mod transitive_relation;
+pub mod tuple_slice;
 pub use ena::unify;
 pub mod vec_linked_list;
 pub mod work_queue;

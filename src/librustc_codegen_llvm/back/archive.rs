@@ -18,7 +18,6 @@ use std::ptr;
 use std::str;
 
 use back::bytecode::RLIB_BYTECODE_EXTENSION;
-use rustc_codegen_ssa::back::archive::find_library;
 use libc;
 use llvm::archive_ro::{ArchiveRO, Child};
 use llvm::{self, ArchiveKind};
@@ -53,6 +52,29 @@ enum Addition {
     },
 }
 
+pub fn find_library(name: &str, search_paths: &[PathBuf], sess: &Session)
+                    -> PathBuf {
+    // On Windows, static libraries sometimes show up as libfoo.a and other
+    // times show up as foo.lib
+    let oslibname = format!("{}{}{}",
+                            sess.target.target.options.staticlib_prefix,
+                            name,
+                            sess.target.target.options.staticlib_suffix);
+    let unixlibname = format!("lib{}.a", name);
+
+    for path in search_paths {
+        debug!("looking for {} inside {:?}", name, path);
+        let test = path.join(&oslibname);
+        if test.exists() { return test }
+        if oslibname != unixlibname {
+            let test = path.join(&unixlibname);
+            if test.exists() { return test }
+        }
+    }
+    sess.fatal(&format!("could not find native static library `{}`, \
+                         perhaps an -L flag is missing?", name));
+}
+
 fn is_relevant_child(c: &Child) -> bool {
     match c.name() {
         Some(name) => !name.contains("SYMDEF"),
@@ -83,16 +105,15 @@ impl<'a> ArchiveBuilder<'a> {
         if self.src_archive().is_none() {
             return Vec::new()
         }
-
         let archive = self.src_archive.as_ref().unwrap().as_ref().unwrap();
-
-        archive.iter()
-               .filter_map(|child| child.ok())
-               .filter(is_relevant_child)
-               .filter_map(|child| child.name())
-               .filter(|name| !self.removals.iter().any(|x| x == name))
-               .map(|name| name.to_owned())
-               .collect()
+        let ret = archive.iter()
+                         .filter_map(|child| child.ok())
+                         .filter(is_relevant_child)
+                         .filter_map(|child| child.name())
+                         .filter(|name| !self.removals.iter().any(|x| x == name))
+                         .map(|name| name.to_string())
+                         .collect();
+        return ret;
     }
 
     fn src_archive(&mut self) -> Option<&ArchiveRO> {
@@ -172,7 +193,7 @@ impl<'a> ArchiveBuilder<'a> {
         let name = file.file_name().unwrap().to_str().unwrap();
         self.additions.push(Addition::File {
             path: file.to_path_buf(),
-            name_in_archive: name.to_owned(),
+            name_in_archive: name.to_string(),
         });
     }
 
@@ -185,8 +206,13 @@ impl<'a> ArchiveBuilder<'a> {
     /// Combine the provided files, rlibs, and native libraries into a single
     /// `Archive`.
     pub fn build(&mut self) {
-        let kind = self.llvm_archive_kind().unwrap_or_else(|kind|
-            self.config.sess.fatal(&format!("Don't know how to build archive of type: {}", kind)));
+        let kind = match self.llvm_archive_kind() {
+            Ok(kind) => kind,
+            Err(kind) => {
+                self.config.sess.fatal(&format!("Don't know how to build archive of type: {}",
+                                                kind));
+            }
+        };
 
         if let Err(e) = self.build_with_llvm(kind) {
             self.config.sess.fatal(&format!("failed to build archive: {}", e));
@@ -277,9 +303,10 @@ impl<'a> ArchiveBuilder<'a> {
             let ret = if r.into_result().is_err() {
                 let err = llvm::LLVMRustGetLastError();
                 let msg = if err.is_null() {
-                    "failed to write archive".into()
+                    "failed to write archive".to_string()
                 } else {
                     String::from_utf8_lossy(CStr::from_ptr(err).to_bytes())
+                            .into_owned()
                 };
                 Err(io::Error::new(io::ErrorKind::Other, msg))
             } else {
@@ -288,7 +315,7 @@ impl<'a> ArchiveBuilder<'a> {
             for member in members {
                 llvm::LLVMRustArchiveMemberFree(member);
             }
-            ret
+            return ret
         }
     }
 }

@@ -92,7 +92,6 @@ impl<T: ?Sized> !Send for *mut T { }
 #[stable(feature = "rust1", since = "1.0.0")]
 #[lang = "sized"]
 #[rustc_on_unimplemented(
-    on(parent_trait="std::path::Path", label="borrow the `Path` instead"),
     message="the size for values of type `{Self}` cannot be known at compilation time",
     label="doesn't have a size known at compile-time",
     note="to learn more, visit <https://doc.rust-lang.org/book/second-edition/\
@@ -274,10 +273,10 @@ pub trait Unsize<T: ?Sized> {
 /// In addition to the [implementors listed below][impls],
 /// the following types also implement `Copy`:
 ///
-/// * Function item types (i.e., the distinct types defined for each function)
-/// * Function pointer types (e.g., `fn() -> i32`)
-/// * Array types, for all sizes, if the item type also implements `Copy` (e.g., `[i32; 123456]`)
-/// * Tuple types, if each component also implements `Copy` (e.g., `()`, `(i32, bool)`)
+/// * Function item types (i.e. the distinct types defined for each function)
+/// * Function pointer types (e.g. `fn() -> i32`)
+/// * Array types, for all sizes, if the item type also implements `Copy` (e.g. `[i32; 123456]`)
+/// * Tuple types, if each component also implements `Copy` (e.g. `()`, `(i32, bool)`)
 /// * Closure types, if they capture no value from the environment
 ///   or if all such captured values implement `Copy` themselves.
 ///   Note that variables captured by shared reference always implement `Copy`
@@ -578,7 +577,6 @@ macro_rules! impls{
 ///
 /// [drop check]: ../../nomicon/dropck.html
 #[lang = "phantom_data"]
-#[structural_match]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct PhantomData<T:?Sized>;
 
@@ -586,9 +584,9 @@ impls! { PhantomData }
 
 mod impls {
     #[stable(feature = "rust1", since = "1.0.0")]
-    unsafe impl<T: Sync + ?Sized> Send for &T {}
+    unsafe impl<'a, T: Sync + ?Sized> Send for &'a T {}
     #[stable(feature = "rust1", since = "1.0.0")]
-    unsafe impl<T: Send + ?Sized> Send for &mut T {}
+    unsafe impl<'a, T: Send + ?Sized> Send for &'a mut T {}
 }
 
 /// Compiler-internal trait used to determine whether a type contains
@@ -596,14 +594,14 @@ mod impls {
 /// This affects, for example, whether a `static` of that type is
 /// placed in read-only static memory or writable static memory.
 #[lang = "freeze"]
-pub(crate) unsafe auto trait Freeze {}
+unsafe auto trait Freeze {}
 
 impl<T: ?Sized> !Freeze for UnsafeCell<T> {}
 unsafe impl<T: ?Sized> Freeze for PhantomData<T> {}
 unsafe impl<T: ?Sized> Freeze for *const T {}
 unsafe impl<T: ?Sized> Freeze for *mut T {}
-unsafe impl<T: ?Sized> Freeze for &T {}
-unsafe impl<T: ?Sized> Freeze for &mut T {}
+unsafe impl<'a, T: ?Sized> Freeze for &'a T {}
+unsafe impl<'a, T: ?Sized> Freeze for &'a mut T {}
 
 /// Types which can be safely moved after being pinned.
 ///
@@ -640,15 +638,15 @@ unsafe impl<T: ?Sized> Freeze for &mut T {}
 #[unstable(feature = "pin", issue = "49150")]
 pub auto trait Unpin {}
 
-/// A marker type which does not implement `Unpin`.
+/// A type which does not implement `Unpin`.
 ///
-/// If a type contains a `PhantomPinned`, it will not implement `Unpin` by default.
+/// If a type contains a `Pinned`, it will not implement `Unpin` by default.
 #[unstable(feature = "pin", issue = "49150")]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct PhantomPinned;
+pub struct Pinned;
 
 #[unstable(feature = "pin", issue = "49150")]
-impl !Unpin for PhantomPinned {}
+impl !Unpin for Pinned {}
 
 #[unstable(feature = "pin", issue = "49150")]
 impl<'a, T: ?Sized + 'a> Unpin for &'a T {}
@@ -691,6 +689,6 @@ mod copy_impls {
 
     // Shared references can be copied, but mutable references *cannot*!
     #[stable(feature = "rust1", since = "1.0.0")]
-    impl<T: ?Sized> Copy for &T {}
+    impl<'a, T: ?Sized> Copy for &'a T {}
 
 }

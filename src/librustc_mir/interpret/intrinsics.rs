@@ -25,11 +25,11 @@ use super::{
 };
 
 
-fn numeric_intrinsic<'tcx, Tag>(
+fn numeric_intrinsic<'tcx>(
     name: &str,
     bits: u128,
     kind: Primitive,
-) -> EvalResult<'tcx, Scalar<Tag>> {
+) -> EvalResult<'tcx, Scalar> {
     let size = match kind {
         Primitive::Int(integer, _) => integer.size(),
         _ => bug!("invalid `{}` argument: {:?}", name, bits),
@@ -51,8 +51,8 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
     pub fn emulate_intrinsic(
         &mut self,
         instance: ty::Instance<'tcx>,
-        args: &[OpTy<'tcx, M::PointerTag>],
-        dest: PlaceTy<'tcx, M::PointerTag>,
+        args: &[OpTy<'tcx>],
+        dest: PlaceTy<'tcx>,
     ) -> EvalResult<'tcx, bool> {
         let substs = instance.substs;
 
@@ -60,16 +60,9 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
         match intrinsic_name {
             "min_align_of" => {
                 let elem_ty = substs.type_at(0);
-                let elem_align = self.layout_of(elem_ty)?.align.abi.bytes();
+                let elem_align = self.layout_of(elem_ty)?.align.abi();
                 let align_val = Scalar::from_uint(elem_align, dest.layout.size);
                 self.write_scalar(align_val, dest)?;
-            }
-
-            "needs_drop" => {
-                let ty = substs.type_at(0);
-                let ty_needs_drop = ty.needs_drop(self.tcx.tcx, self.param_env);
-                let val = Scalar::from_bool(ty_needs_drop);
-                self.write_scalar(val, dest)?;
             }
 
             "size_of" => {
@@ -103,7 +96,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                     if bits == 0 {
                         return err!(Intrinsic(format!("{} called on 0", intrinsic_name)));
                     }
-                    numeric_intrinsic(intrinsic_name.trim_end_matches("_nonzero"), bits, kind)?
+                    numeric_intrinsic(intrinsic_name.trim_right_matches("_nonzero"), bits, kind)?
                 } else {
                     numeric_intrinsic(intrinsic_name, bits, kind)?
                 };
@@ -115,8 +108,8 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
             | "add_with_overflow"
             | "sub_with_overflow"
             | "mul_with_overflow" => {
-                let lhs = self.read_immediate(args[0])?;
-                let rhs = self.read_immediate(args[1])?;
+                let lhs = self.read_value(args[0])?;
+                let rhs = self.read_value(args[1])?;
                 let (bin_op, ignore_overflow) = match intrinsic_name {
                     "overflowing_add" => (BinOp::Add, true),
                     "overflowing_sub" => (BinOp::Sub, true),
@@ -133,14 +126,14 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                 }
             }
             "unchecked_shl" | "unchecked_shr" => {
-                let l = self.read_immediate(args[0])?;
-                let r = self.read_immediate(args[1])?;
+                let l = self.read_value(args[0])?;
+                let r = self.read_value(args[1])?;
                 let bin_op = match intrinsic_name {
                     "unchecked_shl" => BinOp::Shl,
                     "unchecked_shr" => BinOp::Shr,
                     _ => bug!("Already checked for int ops")
                 };
-                let (val, overflowed) = self.binary_op_imm(bin_op, l, r)?;
+                let (val, overflowed) = self.binary_op_val(bin_op, l, r)?;
                 if overflowed {
                     let layout = self.layout_of(substs.type_at(0))?;
                     let r_val =  r.to_scalar()?.to_bits(layout.size)?;
@@ -150,26 +143,12 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                 }
                 self.write_scalar(val, dest)?;
             }
-            "rotate_left" | "rotate_right" => {
-                // rotate_left: (X << (S % BW)) | (X >> ((BW - S) % BW))
-                // rotate_right: (X << ((BW - S) % BW)) | (X >> (S % BW))
-                let layout = self.layout_of(substs.type_at(0))?;
-                let val_bits = self.read_scalar(args[0])?.to_bits(layout.size)?;
-                let raw_shift_bits = self.read_scalar(args[1])?.to_bits(layout.size)?;
-                let width_bits = layout.size.bits() as u128;
-                let shift_bits = raw_shift_bits % width_bits;
-                let inv_shift_bits = (width_bits - raw_shift_bits) % width_bits;
-                let result_bits = if intrinsic_name == "rotate_left" {
-                    (val_bits << shift_bits) | (val_bits >> inv_shift_bits)
-                } else {
-                    (val_bits >> shift_bits) | (val_bits << inv_shift_bits)
-                };
-                let truncated_bits = self.truncate(result_bits, layout);
-                let result = Scalar::from_uint(truncated_bits, layout.size);
-                self.write_scalar(result, dest)?;
-            }
             "transmute" => {
-                self.copy_op_transmute(args[0], dest)?;
+                // Go through an allocation, to make sure the completely different layouts
+                // do not pose a problem.  (When the user transmutes through a union,
+                // there will not be a layout mismatch.)
+                let dest = self.force_allocation(dest)?;
+                self.copy_op(args[0], dest.into())?;
             }
 
             _ => return Ok(false),
@@ -183,15 +162,15 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
     pub fn hook_fn(
         &mut self,
         instance: ty::Instance<'tcx>,
-        args: &[OpTy<'tcx, M::PointerTag>],
-        dest: Option<PlaceTy<'tcx, M::PointerTag>>,
+        args: &[OpTy<'tcx>],
+        dest: Option<PlaceTy<'tcx>>,
     ) -> EvalResult<'tcx, bool> {
         let def_id = instance.def_id();
         // Some fn calls are actually BinOp intrinsics
         if let Some((op, oflo)) = self.tcx.is_binop_lang_item(def_id) {
             let dest = dest.expect("128 lowerings can't diverge");
-            let l = self.read_immediate(args[0])?;
-            let r = self.read_immediate(args[1])?;
+            let l = self.read_value(args[0])?;
+            let r = self.read_value(args[1])?;
             if oflo {
                 self.binop_with_overflow(op, l, r, dest)?;
             } else {
@@ -201,7 +180,8 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
         } else if Some(def_id) == self.tcx.lang_items().panic_fn() {
             assert!(args.len() == 1);
             // &(&'static str, &'static str, u32, u32)
-            let place = self.deref_operand(args[0])?;
+            let ptr = self.read_value(args[0])?;
+            let place = self.ref_to_mplace(ptr)?;
             let (msg, file, line, col) = (
                 self.mplace_field(place, 0)?,
                 self.mplace_field(place, 1)?,
@@ -209,9 +189,9 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                 self.mplace_field(place, 3)?,
             );
 
-            let msg_place = self.deref_operand(msg.into())?;
+            let msg_place = self.ref_to_mplace(self.read_value(msg.into())?)?;
             let msg = Symbol::intern(self.read_str(msg_place)?);
-            let file_place = self.deref_operand(file.into())?;
+            let file_place = self.ref_to_mplace(self.read_value(file.into())?)?;
             let file = Symbol::intern(self.read_str(file_place)?);
             let line = self.read_scalar(line.into())?.to_u32()?;
             let col = self.read_scalar(col.into())?.to_u32()?;
@@ -220,16 +200,17 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
             assert!(args.len() == 2);
             // &'static str, &(&'static str, u32, u32)
             let msg = args[0];
-            let place = self.deref_operand(args[1])?;
+            let ptr = self.read_value(args[1])?;
+            let place = self.ref_to_mplace(ptr)?;
             let (file, line, col) = (
                 self.mplace_field(place, 0)?,
                 self.mplace_field(place, 1)?,
                 self.mplace_field(place, 2)?,
             );
 
-            let msg_place = self.deref_operand(msg.into())?;
+            let msg_place = self.ref_to_mplace(self.read_value(msg.into())?)?;
             let msg = Symbol::intern(self.read_str(msg_place)?);
-            let file_place = self.deref_operand(file.into())?;
+            let file_place = self.ref_to_mplace(self.read_value(file.into())?)?;
             let file = Symbol::intern(self.read_str(file_place)?);
             let line = self.read_scalar(line.into())?.to_u32()?;
             let col = self.read_scalar(col.into())?.to_u32()?;

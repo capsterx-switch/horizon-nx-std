@@ -64,7 +64,6 @@ use rustc::hir::def_id::DefId;
 use rustc::mir::*;
 use rustc::mir::visit::{PlaceContext, Visitor, MutVisitor};
 use rustc::ty::{self, TyCtxt, AdtDef, Ty};
-use rustc::ty::layout::VariantIdx;
 use rustc::ty::subst::Substs;
 use util::dump_mir;
 use util::liveness::{self, IdentityMap};
@@ -159,7 +158,7 @@ struct TransformVisitor<'a, 'tcx: 'a> {
 
 impl<'a, 'tcx> TransformVisitor<'a, 'tcx> {
     // Make a GeneratorState rvalue
-    fn make_state(&self, idx: VariantIdx, val: Operand<'tcx>) -> Rvalue<'tcx> {
+    fn make_state(&self, idx: usize, val: Operand<'tcx>) -> Rvalue<'tcx> {
         let adt = AggregateKind::Adt(self.state_adt_ref, idx, self.state_substs, None, None);
         Rvalue::Aggregate(box adt, vec![val])
     }
@@ -189,7 +188,7 @@ impl<'a, 'tcx> TransformVisitor<'a, 'tcx> {
         });
         Statement {
             source_info,
-            kind: StatementKind::Assign(state, box Rvalue::Use(val)),
+            kind: StatementKind::Assign(state, Rvalue::Use(val)),
         }
     }
 }
@@ -230,11 +229,11 @@ impl<'a, 'tcx> MutVisitor<'tcx> for TransformVisitor<'a, 'tcx> {
         });
 
         let ret_val = match data.terminator().kind {
-            TerminatorKind::Return => Some((VariantIdx::new(1),
+            TerminatorKind::Return => Some((1,
                 None,
                 Operand::Move(Place::Local(self.new_ret_local)),
                 None)),
-            TerminatorKind::Yield { ref value, resume, drop } => Some((VariantIdx::new(0),
+            TerminatorKind::Yield { ref value, resume, drop } => Some((0,
                 Some(resume),
                 value.clone(),
                 drop)),
@@ -247,7 +246,7 @@ impl<'a, 'tcx> MutVisitor<'tcx> for TransformVisitor<'a, 'tcx> {
             data.statements.push(Statement {
                 source_info,
                 kind: StatementKind::Assign(Place::Local(RETURN_PLACE),
-                                            box self.make_state(state_idx, v)),
+                    self.make_state(state_idx, v)),
             });
             let state = if let Some(resume) = resume { // Yield
                 let state = 3 + self.suspension_points.len() as u32;
@@ -304,12 +303,11 @@ fn replace_result_variable<'tcx>(
     let new_ret = LocalDecl {
         mutability: Mutability::Mut,
         ty: ret_ty,
-        user_ty: UserTypeProjections::none(),
+        user_ty: None,
         name: None,
         source_info,
         visibility_scope: source_info.scope,
         internal: false,
-        is_block_tail: None,
         is_user_variable: None,
     };
     let new_ret_local = Local::new(mir.local_decls.len());
@@ -379,7 +377,7 @@ fn locals_live_across_suspend_points(
     FxHashMap<BasicBlock, liveness::LiveVarSet<Local>>,
 ) {
     let dead_unwinds = BitSet::new_empty(mir.basic_blocks().len());
-    let node_id = tcx.hir().as_local_node_id(source.def_id).unwrap();
+    let node_id = tcx.hir.as_local_node_id(source.def_id).unwrap();
 
     // Calculate when MIR locals have live storage. This gives us an upper bound of their
     // lifetimes.
@@ -659,12 +657,11 @@ fn create_generator_drop_shim<'a, 'tcx>(
     mir.local_decls[RETURN_PLACE] = LocalDecl {
         mutability: Mutability::Mut,
         ty: tcx.mk_unit(),
-        user_ty: UserTypeProjections::none(),
+        user_ty: None,
         name: None,
         source_info,
         visibility_scope: source_info.scope,
         internal: false,
-        is_block_tail: None,
         is_user_variable: None,
     };
 
@@ -677,21 +674,13 @@ fn create_generator_drop_shim<'a, 'tcx>(
             ty: gen_ty,
             mutbl: hir::Mutability::MutMutable,
         }),
-        user_ty: UserTypeProjections::none(),
+        user_ty: None,
         name: None,
         source_info,
         visibility_scope: source_info.scope,
         internal: false,
-        is_block_tail: None,
         is_user_variable: None,
     };
-    if tcx.sess.opts.debugging_opts.mir_emit_retag {
-        // Alias tracking must know we changed the type
-        mir.basic_blocks_mut()[START_BLOCK].statements.insert(0, Statement {
-            source_info,
-            kind: StatementKind::EscapeToRaw(Operand::Copy(Place::Local(self_arg()))),
-        })
-    }
 
     no_landing_pads(tcx, &mut mir);
 

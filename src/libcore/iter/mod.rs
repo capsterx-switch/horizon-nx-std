@@ -112,10 +112,10 @@
 //!
 //!     // next() is the only required method
 //!     fn next(&mut self) -> Option<usize> {
-//!         // Increment our count. This is why we started at zero.
+//!         // increment our count. This is why we started at zero.
 //!         self.count += 1;
 //!
-//!         // Check to see if we've finished counting or not.
+//!         // check to see if we've finished counting or not.
 //!         if self.count < 6 {
 //!             Some(self.count)
 //!         } else {
@@ -253,7 +253,7 @@
 //! using it. The compiler will warn us about this kind of behavior:
 //!
 //! ```text
-//! warning: unused result that must be used: iterator adaptors are lazy and
+//! warning: unused result which must be used: iterator adaptors are lazy and
 //! do nothing unless consumed
 //! ```
 //!
@@ -319,9 +319,10 @@
 use cmp;
 use fmt;
 use iter_private::TrustedRandomAccess;
-use ops::Try;
+use ops::{self, Try};
 use usize;
 use intrinsics;
+use mem;
 
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use self::iterator::Iterator;
@@ -339,8 +340,6 @@ pub use self::sources::{RepeatWith, repeat_with};
 pub use self::sources::{Empty, empty};
 #[stable(feature = "iter_once", since = "1.2.0")]
 pub use self::sources::{Once, once};
-#[unstable(feature = "iter_unfold", issue = "55977")]
-pub use self::sources::{Unfold, unfold, Successors, successors};
 
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use self::traits::{FromIterator, IntoIterator, DoubleEndedIterator, Extend};
@@ -602,9 +601,7 @@ unsafe impl<'a, I, T: 'a> TrustedRandomAccess for Cloned<I>
     }
 
     #[inline]
-    fn may_have_side_effect() -> bool {
-        I::may_have_side_effect()
-    }
+    fn may_have_side_effect() -> bool { false }
 }
 
 #[unstable(feature = "trusted_len", issue = "37572")]
@@ -649,19 +646,6 @@ impl<I> Iterator for Cycle<I> where I: Clone + Iterator {
             _ => (usize::MAX, None)
         }
     }
-
-    #[inline]
-    fn try_fold<Acc, F, R>(&mut self, init: Acc, mut f: F) -> R where
-        Self: Sized, F: FnMut(Acc, Self::Item) -> R, R: Try<Ok=Acc>
-    {
-        let mut accum = init;
-        while let Some(x) = self.iter.next() {
-            accum = f(accum, x)?;
-            accum = self.iter.try_fold(accum, &mut f)?;
-            self.iter = self.orig.clone();
-        }
-        Try::from_ok(accum)
-    }
 }
 
 #[stable(feature = "fused", since = "1.26.0")]
@@ -689,12 +673,7 @@ impl<I> Iterator for StepBy<I> where I: Iterator {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.first_take {
-            self.first_take = false;
-            self.iter.next()
-        } else {
-            self.iter.nth(self.step)
-        }
+        <Self as StepBySpecIterator>::spec_next(self)
     }
 
     #[inline]
@@ -750,6 +729,78 @@ impl<I> Iterator for StepBy<I> where I: Iterator {
                 nth_step
             };
             self.iter.nth(nth - 1);
+        }
+    }
+}
+
+// hidden trait for specializing iterator methods
+// could be generalized but is currently only used for StepBy
+trait StepBySpecIterator {
+    type Item;
+    fn spec_next(&mut self) -> Option<Self::Item>;
+}
+
+impl<I> StepBySpecIterator for StepBy<I>
+where
+    I: Iterator,
+{
+    type Item = I::Item;
+
+    #[inline]
+    default fn spec_next(&mut self) -> Option<I::Item> {
+        if self.first_take {
+            self.first_take = false;
+            self.iter.next()
+        } else {
+            self.iter.nth(self.step)
+        }
+    }
+}
+
+impl<T> StepBySpecIterator for StepBy<ops::Range<T>>
+where
+    T: Step,
+{
+    #[inline]
+    fn spec_next(&mut self) -> Option<Self::Item> {
+        self.first_take = false;
+        if !(self.iter.start < self.iter.end) {
+            return None;
+        }
+        // add 1 to self.step to get original step size back
+        // it was decremented for the general case on construction
+        if let Some(n) = self.iter.start.add_usize(self.step+1) {
+            let next = mem::replace(&mut self.iter.start, n);
+            Some(next)
+        } else {
+            let last = self.iter.start.clone();
+            self.iter.start = self.iter.end.clone();
+            Some(last)
+        }
+    }
+}
+
+impl<T> StepBySpecIterator for StepBy<ops::RangeInclusive<T>>
+where
+    T: Step,
+{
+    #[inline]
+    fn spec_next(&mut self) -> Option<Self::Item> {
+        self.first_take = false;
+        self.iter.compute_is_empty();
+        if self.iter.is_empty.unwrap_or_default() {
+            return None;
+        }
+        // add 1 to self.step to get original step size back
+        // it was decremented for the general case on construction
+        if let Some(n) = self.iter.start.add_usize(self.step+1) {
+            self.iter.is_empty = Some(!(n <= self.iter.end));
+            let next = mem::replace(&mut self.iter.start, n);
+            Some(next)
+        } else {
+            let last = self.iter.start.clone();
+            self.iter.is_empty = Some(true);
+            Some(last)
         }
     }
 }
@@ -1868,11 +1919,18 @@ impl<I: Iterator> Iterator for Peekable<I> {
 
     #[inline]
     fn nth(&mut self, n: usize) -> Option<I::Item> {
-        match self.peeked.take() {
-            Some(None) => None,
-            Some(v @ Some(_)) if n == 0 => v,
-            Some(Some(_)) => self.iter.nth(n - 1),
-            None => self.iter.nth(n),
+        // FIXME(#43234): merge these when borrow-checking gets better.
+        if n == 0 {
+            match self.peeked.take() {
+                Some(v) => v,
+                None => self.iter.nth(n),
+            }
+        } else {
+            match self.peeked.take() {
+                Some(None) => None,
+                Some(Some(_)) => self.iter.nth(n - 1),
+                None => self.iter.nth(n),
+            }
         }
     }
 
@@ -1971,8 +2029,14 @@ impl<I: Iterator> Peekable<I> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn peek(&mut self) -> Option<&I::Item> {
-        let iter = &mut self.iter;
-        self.peeked.get_or_insert_with(|| iter.next()).as_ref()
+        if self.peeked.is_none() {
+            self.peeked = Some(self.iter.next());
+        }
+        match self.peeked {
+            Some(Some(ref value)) => Some(value),
+            Some(None) => None,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -2109,12 +2173,8 @@ impl<I: Iterator, P> Iterator for TakeWhile<I, P>
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        if self.flag {
-            (0, Some(0))
-        } else {
-            let (_, upper) = self.iter.size_hint();
-            (0, upper) // can't know a lower bound, due to the predicate
-        }
+        let (_, upper) = self.iter.size_hint();
+        (0, upper) // can't know a lower bound, due to the predicate
     }
 
     #[inline]
@@ -2325,10 +2385,6 @@ impl<I> Iterator for Take<I> where I: Iterator{
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        if self.n == 0 {
-            return (0, Some(0));
-        }
-
         let (lower, upper) = self.iter.size_hint();
 
         let lower = cmp::min(lower, self.n);

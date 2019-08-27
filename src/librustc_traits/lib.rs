@@ -11,9 +11,11 @@
 //! New recursive solver modeled on Chalk's recursive solver. Most of
 //! the guts are broken up into modules; see the comments in those modules.
 
+#![cfg_attr(stage0, feature(crate_in_paths))]
 #![feature(crate_visibility_modifier)]
+#![cfg_attr(stage0, feature(extern_prelude))]
 #![feature(in_band_lifetimes)]
-#![feature(nll)]
+#![cfg_attr(not(stage0), feature(nll))]
 
 #![recursion_limit="256"]
 
@@ -23,7 +25,6 @@ extern crate log;
 #[macro_use]
 extern crate rustc;
 extern crate rustc_data_structures;
-extern crate rustc_target;
 extern crate syntax;
 extern crate syntax_pos;
 extern crate smallvec;

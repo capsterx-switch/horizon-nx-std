@@ -16,7 +16,6 @@ use dataflow::{drop_flag_effects_for_location, on_lookup_result_bits};
 use dataflow::MoveDataParamEnv;
 use dataflow::{self, do_dataflow, DebugFormatted};
 use rustc::ty::{self, TyCtxt};
-use rustc::ty::layout::VariantIdx;
 use rustc::mir::*;
 use rustc::util::nodemap::FxHashMap;
 use rustc_data_structures::bit_set::BitSet;
@@ -38,7 +37,7 @@ impl MirPass for ElaborateDrops {
     {
         debug!("elaborate_drops({:?} @ {:?})", src, mir.span);
 
-        let id = tcx.hir().as_local_node_id(src.def_id).unwrap();
+        let id = tcx.hir.as_local_node_id(src.def_id).unwrap();
         let param_env = tcx.param_env(src.def_id).with_reveal_all();
         let move_data = match MoveData::gather_moves(mir, tcx) {
             Ok(move_data) => move_data,
@@ -76,7 +75,7 @@ impl MirPass for ElaborateDrops {
                 env: &env,
                 flow_inits,
                 flow_uninits,
-                drop_flags: Default::default(),
+                drop_flags: FxHashMap(),
                 patch: MirPatch::new(mir),
             }.elaborate()
         };
@@ -283,7 +282,7 @@ impl<'a, 'b, 'tcx> DropElaborator<'a, 'tcx> for Elaborator<'a, 'b, 'tcx> {
         })
     }
 
-    fn downcast_subpath(&self, path: Self::Path, variant: VariantIdx) -> Option<Self::Path> {
+    fn downcast_subpath(&self, path: Self::Path, variant: usize) -> Option<Self::Path> {
         dataflow::move_path_children_matching(self.ctxt.move_data(), path, |p| {
             match p {
                 &Projection {
@@ -479,11 +478,11 @@ impl<'b, 'tcx> ElaborateDropsCtxt<'b, 'tcx> {
         assert!(!data.is_cleanup, "DropAndReplace in unwind path not supported");
 
         let assign = Statement {
-            kind: StatementKind::Assign(location.clone(), box Rvalue::Use(value.clone())),
+            kind: StatementKind::Assign(location.clone(), Rvalue::Use(value.clone())),
             source_info: terminator.source_info
         };
 
-        let unwind = unwind.unwrap_or_else(|| self.patch.resume_block());
+        let unwind = unwind.unwrap_or(self.patch.resume_block());
         let unwind = self.patch.new_block(BasicBlockData {
             statements: vec![assign.clone()],
             terminator: Some(Terminator {
@@ -496,7 +495,7 @@ impl<'b, 'tcx> ElaborateDropsCtxt<'b, 'tcx> {
         let target = self.patch.new_block(BasicBlockData {
             statements: vec![assign],
             terminator: Some(Terminator {
-                kind: TerminatorKind::Goto { target },
+                kind: TerminatorKind::Goto { target: target },
                 ..*terminator
             }),
             is_cleanup: false,

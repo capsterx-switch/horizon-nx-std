@@ -19,7 +19,7 @@ use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 
 use rustc::mir::*;
 use rustc::mir::visit::*;
-use rustc::ty::{self, Instance, InstanceDef, ParamEnv, Ty, TyCtxt};
+use rustc::ty::{self, Instance, Ty, TyCtxt};
 use rustc::ty::subst::{Subst,Substs};
 
 use std::collections::VecDeque;
@@ -83,18 +83,32 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
         let param_env = self.tcx.param_env(self.source.def_id);
 
         // Only do inlining into fn bodies.
-        let id = self.tcx.hir().as_local_node_id(self.source.def_id).unwrap();
-        let body_owner_kind = self.tcx.hir().body_owner_kind(id);
-
+        let id = self.tcx.hir.as_local_node_id(self.source.def_id).unwrap();
+        let body_owner_kind = self.tcx.hir.body_owner_kind(id);
         if let (hir::BodyOwnerKind::Fn, None) = (body_owner_kind, self.source.promoted) {
 
             for (bb, bb_data) in caller_mir.basic_blocks().iter_enumerated() {
-                if let Some(callsite) = self.get_valid_function_call(bb,
-                                                                     bb_data,
-                                                                     caller_mir,
-                                                                     param_env) {
-                    callsites.push_back(callsite);
-                }
+                // Don't inline calls that are in cleanup blocks.
+                if bb_data.is_cleanup { continue; }
+
+                // Only consider direct calls to functions
+                let terminator = bb_data.terminator();
+                if let TerminatorKind::Call {
+                    func: ref op, .. } = terminator.kind {
+                        if let ty::FnDef(callee_def_id, substs) = op.ty(caller_mir, self.tcx).sty {
+                            if let Some(instance) = Instance::resolve(self.tcx,
+                                                                      param_env,
+                                                                      callee_def_id,
+                                                                      substs) {
+                                callsites.push_back(CallSite {
+                                    callee: instance.def_id(),
+                                    substs: instance.substs,
+                                    bb,
+                                    location: terminator.source_info
+                                });
+                            }
+                        }
+                    }
             }
         } else {
             return;
@@ -114,7 +128,7 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
 
                 let callee_mir = match self.tcx.try_optimized_mir(callsite.location.span,
                                                                   callsite.callee) {
-                    Ok(callee_mir) if self.consider_optimizing(callsite, callee_mir) => {
+                    Ok(callee_mir) if self.should_inline(callsite, callee_mir) => {
                         self.tcx.subst_and_normalize_erasing_regions(
                             &callsite.substs,
                             param_env,
@@ -140,13 +154,20 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
 
                 // Add callsites from inlined function
                 for (bb, bb_data) in caller_mir.basic_blocks().iter_enumerated().skip(start) {
-                    if let Some(new_callsite) = self.get_valid_function_call(bb,
-                                                                             bb_data,
-                                                                             caller_mir,
-                                                                             param_env) {
-                        // Don't inline the same function multiple times.
-                        if callsite.callee != new_callsite.callee {
-                            callsites.push_back(new_callsite);
+                    // Only consider direct calls to functions
+                    let terminator = bb_data.terminator();
+                    if let TerminatorKind::Call {
+                        func: Operand::Constant(ref f), .. } = terminator.kind {
+                        if let ty::FnDef(callee_def_id, substs) = f.ty.sty {
+                            // Don't inline the same function multiple times.
+                            if callsite.callee != callee_def_id {
+                                callsites.push_back(CallSite {
+                                    callee: callee_def_id,
+                                    substs,
+                                    bb,
+                                    location: terminator.source_info
+                                });
+                            }
                         }
                     }
                 }
@@ -166,52 +187,6 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
             CfgSimplifier::new(caller_mir).simplify();
             remove_dead_blocks(caller_mir);
         }
-    }
-
-    fn get_valid_function_call(&self,
-                               bb: BasicBlock,
-                               bb_data: &BasicBlockData<'tcx>,
-                               caller_mir: &Mir<'tcx>,
-                               param_env: ParamEnv<'tcx>,
-    ) -> Option<CallSite<'tcx>> {
-        // Don't inline calls that are in cleanup blocks.
-        if bb_data.is_cleanup { return None; }
-
-        // Only consider direct calls to functions
-        let terminator = bb_data.terminator();
-        if let TerminatorKind::Call { func: ref op, .. } = terminator.kind {
-            if let ty::FnDef(callee_def_id, substs) = op.ty(caller_mir, self.tcx).sty {
-                let instance = Instance::resolve(self.tcx,
-                                                 param_env,
-                                                 callee_def_id,
-                                                 substs)?;
-
-                if let InstanceDef::Virtual(..) = instance.def {
-                    return None;
-                }
-
-                return Some(CallSite {
-                    callee: instance.def_id(),
-                    substs: instance.substs,
-                    bb,
-                    location: terminator.source_info
-                });
-            }
-        }
-
-        None
-    }
-
-    fn consider_optimizing(&self,
-                           callsite: CallSite<'tcx>,
-                           callee_mir: &Mir<'tcx>)
-                           -> bool
-    {
-        debug!("consider_optimizing({:?})", callsite);
-        self.should_inline(callsite, callee_mir)
-            && self.tcx.consider_optimizing(|| format!("Inline {:?} into {:?}",
-                                                       callee_mir.span,
-                                                       callsite))
     }
 
     fn should_inline(&self,
@@ -472,7 +447,7 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
 
                     let stmt = Statement {
                         source_info: callsite.location,
-                        kind: StatementKind::Assign(tmp.clone(), box dest)
+                        kind: StatementKind::Assign(tmp.clone(), dest)
                     };
                     caller_mir[callsite.bb]
                         .statements.push(stmt);
@@ -575,10 +550,10 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
             // The `tmp0`, `tmp1`, and `tmp2` in our example abonve.
             let tuple_tmp_args =
                 tuple_tys.iter().enumerate().map(|(i, ty)| {
-                    // This is e.g., `tuple_tmp.0` in our example above.
+                    // This is e.g. `tuple_tmp.0` in our example above.
                     let tuple_field = Operand::Move(tuple.clone().field(Field::new(i), ty));
 
-                    // Spill to a local to make e.g., `tmp0`.
+                    // Spill to a local to make e.g. `tmp0`.
                     self.create_temp_if_necessary(tuple_field, callsite, caller_mir)
                 });
 
@@ -619,7 +594,7 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
 
         let stmt = Statement {
             source_info: callsite.location,
-            kind: StatementKind::Assign(Place::Local(arg_tmp), box arg),
+            kind: StatementKind::Assign(Place::Local(arg_tmp), arg),
         };
         caller_mir[callsite.bb].statements.push(stmt);
         arg_tmp
@@ -705,20 +680,6 @@ impl<'a, 'tcx> MutVisitor<'tcx> for Integrator<'a, 'tcx> {
         self.in_cleanup_block = data.is_cleanup;
         self.super_basic_block_data(block, data);
         self.in_cleanup_block = false;
-    }
-
-    fn visit_retag(
-        &mut self,
-        fn_entry: &mut bool,
-        two_phase: &mut bool,
-        place: &mut Place<'tcx>,
-        loc: Location,
-    ) {
-        self.super_retag(fn_entry, two_phase, place, loc);
-
-        // We have to patch all inlined retags to be aware that they are no longer
-        // happening on function entry.
-        *fn_entry = false;
     }
 
     fn visit_terminator_kind(&mut self, block: BasicBlock,

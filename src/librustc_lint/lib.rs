@@ -8,14 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! # Lints in the Rust compiler
+//! Lints in the Rust compiler.
 //!
 //! This currently only contains the definitions and implementations
 //! of most of the lints that `rustc` supports directly, it does not
 //! contain the infrastructure for defining/registering lints. That is
 //! available in `rustc::lint` and `rustc_plugin` respectively.
 //!
-//! ## Note
+//! # Note
 //!
 //! This API is completely unstable and subject to change.
 
@@ -26,9 +26,11 @@
 #![cfg_attr(test, feature(test))]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![feature(nll)]
+#![cfg_attr(stage0, feature(macro_vis_matcher))]
+#![cfg_attr(not(stage0), feature(nll))]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
+#![feature(macro_at_most_once_rep)]
 
 #[macro_use]
 extern crate syntax;
@@ -36,15 +38,9 @@ extern crate syntax;
 extern crate rustc;
 #[macro_use]
 extern crate log;
+extern crate rustc_mir;
 extern crate rustc_target;
 extern crate syntax_pos;
-extern crate rustc_data_structures;
-
-mod diagnostics;
-mod nonstandard_style;
-pub mod builtin;
-mod types;
-mod unused;
 
 use rustc::lint;
 use rustc::lint::{LateContext, LateLintPass, LintPass, LintArray};
@@ -52,7 +48,6 @@ use rustc::lint::builtin::{
     BARE_TRAIT_OBJECTS,
     ABSOLUTE_PATHS_NOT_STARTING_WITH_CRATE,
     ELIDED_LIFETIMES_IN_PATHS,
-    EXPLICIT_OUTLIVES_REQUIREMENTS,
     parser::QUESTION_MARK_MACRO_SEP
 };
 use rustc::session;
@@ -60,12 +55,18 @@ use rustc::util;
 use rustc::hir;
 
 use syntax::ast;
-use syntax::edition::Edition;
 use syntax_pos::Span;
 
 use session::Session;
+use syntax::edition::Edition;
 use lint::LintId;
 use lint::FutureIncompatibleInfo;
+
+mod diagnostics;
+mod nonstandard_style;
+pub mod builtin;
+mod types;
+mod unused;
 
 use nonstandard_style::*;
 use builtin::*;
@@ -83,30 +84,30 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         ($sess:ident, $($name:ident),*,) => (
             {$(
                 store.register_early_pass($sess, false, box $name);
-            )*}
-        )
+                )*}
+            )
     }
 
     macro_rules! add_pre_expansion_builtin {
         ($sess:ident, $($name:ident),*,) => (
             {$(
                 store.register_pre_expansion_pass($sess, box $name);
-            )*}
-        )
+                )*}
+            )
     }
 
     macro_rules! add_early_builtin_with_new {
         ($sess:ident, $($name:ident),*,) => (
             {$(
                 store.register_early_pass($sess, false, box $name::new());
-            )*}
-        )
+                )*}
+            )
     }
 
     macro_rules! add_lint_group {
         ($sess:ident, $name:expr, $($lint:ident),*) => (
             store.register_group($sess, false, $name, None, vec![$(LintId::of($lint)),*]);
-        )
+            )
     }
 
     add_pre_expansion_builtin!(sess,
@@ -143,6 +144,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         UnusedAllocation: UnusedAllocation,
         MissingCopyImplementations: MissingCopyImplementations,
         UnstableFeatures: UnstableFeatures,
+        UnconditionalRecursion: UnconditionalRecursion,
         InvalidNoMangleItems: InvalidNoMangleItems,
         PluginAsLibrary: PluginAsLibrary,
         MutableTransmutes: MutableTransmutes,
@@ -155,10 +157,15 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         TypeLimits: TypeLimits::new(),
         MissingDoc: MissingDoc::new(),
         MissingDebugImplementations: MissingDebugImplementations::new(),
-        ExplicitOutlivesRequirements: ExplicitOutlivesRequirements,
     ]], ['tcx]);
 
     store.register_late_pass(sess, false, box BuiltinCombinedLateLintPass::new());
+
+    add_lint_group!(sess,
+                    "bad_style",
+                    NON_CAMEL_CASE_TYPES,
+                    NON_SNAKE_CASE,
+                    NON_UPPER_CASE_GLOBALS);
 
     add_lint_group!(sess,
                     "nonstandard_style",
@@ -192,8 +199,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                     BARE_TRAIT_OBJECTS,
                     UNUSED_EXTERN_CRATES,
                     ELLIPSIS_INCLUSIVE_RANGE_PATTERNS,
-                    ELIDED_LIFETIMES_IN_PATHS,
-                    EXPLICIT_OUTLIVES_REQUIREMENTS
+                    ELIDED_LIFETIMES_IN_PATHS
 
                     // FIXME(#52665, #47816) not always applicable and not all
                     // macros are ready for this yet.
@@ -212,7 +218,8 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
     //   and include the full URL, sort items in ascending order of issue numbers.
     // - Later, change lint to error
     // - Eventually, remove lint
-    store.register_future_incompatible(sess, vec![
+    store.register_future_incompatible(sess,
+                                       vec![
         FutureIncompatibleInfo {
             id: LintId::of(PRIVATE_IN_PUBLIC),
             reference: "issue #34537 <https://github.com/rust-lang/rust/issues/34537>",
@@ -307,12 +314,17 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         },
         FutureIncompatibleInfo {
             id: LintId::of(ABSOLUTE_PATHS_NOT_STARTING_WITH_CRATE),
-            reference: "issue #53130 <https://github.com/rust-lang/rust/issues/53130>",
+            reference: "issue TBD",
             edition: Some(Edition::Edition2018),
         },
         FutureIncompatibleInfo {
             id: LintId::of(WHERE_CLAUSES_OBJECT_SAFETY),
             reference: "issue #51443 <https://github.com/rust-lang/rust/issues/51443>",
+            edition: None,
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(DUPLICATE_ASSOCIATED_TYPE_BINDINGS),
+            reference: "issue #50589 <https://github.com/rust-lang/rust/issues/50589>",
             edition: None,
         },
         FutureIncompatibleInfo {
@@ -332,7 +344,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         },
         ]);
 
-    // Register renamed and removed lints.
+    // Register renamed and removed lints
     store.register_renamed("single_use_lifetime", "single_use_lifetimes");
     store.register_renamed("elided_lifetime_in_path", "elided_lifetimes_in_paths");
     store.register_renamed("bare_trait_object", "bare_trait_objects");
@@ -343,10 +355,8 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
     store.register_removed("unsigned_negation", "replaced by negate_unsigned feature gate");
     store.register_removed("negate_unsigned", "cast a signed value instead");
     store.register_removed("raw_pointer_derive", "using derive with raw pointers is ok");
-    // Register lint group aliases.
-    store.register_group_alias("nonstandard_style", "bad_style");
-    // This was renamed to `raw_pointer_derive`, which was then removed,
-    // so it is also considered removed.
+    // This was renamed to raw_pointer_derive, which was then removed,
+    // so it is also considered removed
     store.register_removed("raw_pointer_deriving", "using derive with raw pointers is ok");
     store.register_removed("drop_with_repr_extern", "drop flags have been removed");
     store.register_removed("fat_ptr_transmutes", "was accidentally removed back in 2014");
@@ -375,8 +385,4 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         "converted into hard error, see https://github.com/rust-lang/rust/issues/48950");
     store.register_removed("resolve_trait_on_defaulted_unit",
         "converted into hard error, see https://github.com/rust-lang/rust/issues/48950");
-    store.register_removed("private_no_mangle_fns",
-        "no longer an warning, #[no_mangle] functions always exported");
-    store.register_removed("private_no_mangle_statics",
-        "no longer an warning, #[no_mangle] statics always exported");
 }

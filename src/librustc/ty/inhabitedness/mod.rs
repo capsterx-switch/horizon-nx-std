@@ -113,7 +113,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     }
 
     fn ty_inhabitedness_forest(self, ty: Ty<'tcx>) -> DefIdForest {
-        ty.uninhabited_from(&mut FxHashMap::default(), self)
+        ty.uninhabited_from(&mut FxHashMap(), self)
     }
 
     pub fn is_enum_variant_uninhabited_from(self,
@@ -140,7 +140,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         let adt_kind = self.adt_def(adt_def_id).adt_kind();
 
         // Compute inhabitedness forest:
-        variant.uninhabited_from(&mut FxHashMap::default(), self, substs, adt_kind)
+        variant.uninhabited_from(&mut FxHashMap(), self, substs, adt_kind)
     }
 }
 
@@ -167,16 +167,23 @@ impl<'a, 'gcx, 'tcx> VariantDef {
         substs: &'tcx Substs<'tcx>,
         adt_kind: AdtKind) -> DefIdForest
     {
-        let is_enum = match adt_kind {
-            // For now, `union`s are never considered uninhabited.
-            // The precise semantics of inhabitedness with respect to unions is currently undecided.
-            AdtKind::Union => return DefIdForest::empty(),
-            AdtKind::Enum => true,
-            AdtKind::Struct => false,
-        };
-        DefIdForest::union(tcx, self.fields.iter().map(|f| {
-            f.uninhabited_from(visited, tcx, substs, is_enum)
-        }))
+        match adt_kind {
+            AdtKind::Union => {
+                DefIdForest::intersection(tcx, self.fields.iter().map(|f| {
+                    f.uninhabited_from(visited, tcx, substs, false)
+                }))
+            },
+            AdtKind::Struct => {
+                DefIdForest::union(tcx, self.fields.iter().map(|f| {
+                    f.uninhabited_from(visited, tcx, substs, false)
+                }))
+            },
+            AdtKind::Enum => {
+                DefIdForest::union(tcx, self.fields.iter().map(|f| {
+                    f.uninhabited_from(visited, tcx, substs, true)
+                }))
+            },
+        }
     }
 }
 
@@ -187,8 +194,8 @@ impl<'a, 'gcx, 'tcx> FieldDef {
         visited: &mut FxHashMap<DefId, FxHashSet<&'tcx Substs<'tcx>>>,
         tcx: TyCtxt<'a, 'gcx, 'tcx>,
         substs: &'tcx Substs<'tcx>,
-        is_enum: bool,
-    ) -> DefIdForest {
+        is_enum: bool) -> DefIdForest
+    {
         let mut data_uninhabitedness = move || {
             self.ty(tcx, substs).uninhabited_from(visited, tcx)
         };
@@ -246,16 +253,14 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
                 let substs_set = visited.get_mut(&def.did).unwrap();
                 substs_set.remove(substs);
                 ret
-            }
+            },
 
             Never => DefIdForest::full(tcx),
-
             Tuple(ref tys) => {
                 DefIdForest::union(tcx, tys.iter().map(|ty| {
                     ty.uninhabited_from(visited, tcx)
                 }))
-            }
-
+            },
             Array(ty, len) => {
                 match len.assert_usize(tcx) {
                     // If the array is definitely non-empty, it's uninhabited if
@@ -264,13 +269,9 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
                     _ => DefIdForest::empty()
                 }
             }
-
-            // References to uninitialised memory is valid for any type, including
-            // uninhabited types, in unsafe code, so we treat all references as
-            // inhabited.
-            // The precise semantics of inhabitedness with respect to references is currently
-            // undecided.
-            Ref(..) => DefIdForest::empty(),
+            Ref(_, ty, _) => {
+                ty.uninhabited_from(visited, tcx)
+            }
 
             _ => DefIdForest::empty(),
         }

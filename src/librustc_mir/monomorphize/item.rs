@@ -8,6 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Walks the crate looking for items/impl-items/trait-items that have
+//! either a `rustc_symbol_name` or `rustc_item_path` attribute and
+//! generates an error giving, respectively, the symbol name or
+//! item-path. This is used for unit testing the code that generates
+//! paths etc in all kinds of annoying scenarios.
+
 use monomorphize::Instance;
 use rustc::hir;
 use rustc::hir::def_id::DefId;
@@ -68,7 +74,7 @@ pub trait MonoItemExt<'a, 'tcx>: fmt::Debug {
                 tcx.symbol_name(Instance::mono(tcx, def_id))
             }
             MonoItem::GlobalAsm(node_id) => {
-                let def_id = tcx.hir().local_def_id(node_id);
+                let def_id = tcx.hir.local_def_id(node_id);
                 ty::SymbolName {
                     name: Symbol::intern(&format!("global_asm_{:?}", def_id)).as_interned_str()
                 }
@@ -86,7 +92,7 @@ pub trait MonoItemExt<'a, 'tcx>: fmt::Debug {
         match *self.as_mono_item() {
             MonoItem::Fn(ref instance) => {
                 let entry_def_id =
-                    tcx.sess.entry_fn.borrow().map(|(id, _, _)| tcx.hir().local_def_id(id));
+                    tcx.sess.entry_fn.borrow().map(|(id, _, _)| tcx.hir.local_def_id(id));
                 // If this function isn't inlined or otherwise has explicit
                 // linkage, then we'll be creating a globally shared version.
                 if self.explicit_linkage(tcx).is_some() ||
@@ -199,15 +205,15 @@ pub trait MonoItemExt<'a, 'tcx>: fmt::Debug {
     fn local_span(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> Option<Span> {
         match *self.as_mono_item() {
             MonoItem::Fn(Instance { def, .. }) => {
-                tcx.hir().as_local_node_id(def.def_id())
+                tcx.hir.as_local_node_id(def.def_id())
             }
             MonoItem::Static(def_id) => {
-                tcx.hir().as_local_node_id(def_id)
+                tcx.hir.as_local_node_id(def_id)
             }
             MonoItem::GlobalAsm(node_id) => {
                 Some(node_id)
             }
-        }.map(|node_id| tcx.hir().span(node_id))
+        }.map(|node_id| tcx.hir.span(node_id))
     }
 }
 
@@ -314,13 +320,12 @@ impl<'a, 'tcx> DefPathBasedNames<'a, 'tcx> {
                 output.push(']');
             },
             ty::Dynamic(ref trait_data, ..) => {
-                let principal = trait_data.principal();
-                self.push_def_path(principal.def_id(), output);
-                self.push_type_params(
-                    principal.skip_binder().substs,
-                    trait_data.projection_bounds(),
-                    output,
-                );
+                if let Some(principal) = trait_data.principal() {
+                    self.push_def_path(principal.def_id(), output);
+                    self.push_type_params(principal.skip_binder().substs,
+                        trait_data.projection_bounds(),
+                        output);
+                }
             },
             ty::Foreign(did) => self.push_def_path(did, output),
             ty::FnDef(..) |
@@ -376,10 +381,7 @@ impl<'a, 'tcx> DefPathBasedNames<'a, 'tcx> {
                 self.push_type_params(substs, iter::empty(), output);
             }
             ty::Error |
-            ty::Bound(..) |
             ty::Infer(_) |
-            ty::Placeholder(..) |
-            ty::UnnormalizedProjection(..) |
             ty::Projection(..) |
             ty::Param(_) |
             ty::GeneratorWitness(_) |

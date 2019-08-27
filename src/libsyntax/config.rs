@@ -9,14 +9,7 @@
 // except according to those terms.
 
 use attr::HasAttrs;
-use feature_gate::{
-    feature_err,
-    EXPLAIN_STMT_ATTR_SYNTAX,
-    Features,
-    get_features,
-    GateIssue,
-    emit_feature_err,
-};
+use feature_gate::{feature_err, EXPLAIN_STMT_ATTR_SYNTAX, Features, get_features, GateIssue};
 use {fold, attr};
 use ast;
 use source_map::Spanned;
@@ -80,103 +73,48 @@ impl<'a> StripUnconfigured<'a> {
         if self.in_cfg(node.attrs()) { Some(node) } else { None }
     }
 
-    /// Parse and expand all `cfg_attr` attributes into a list of attributes
-    /// that are within each `cfg_attr` that has a true configuration predicate.
-    ///
-    /// Gives compiler warnigns if any `cfg_attr` does not contain any
-    /// attributes and is in the original source code. Gives compiler errors if
-    /// the syntax of any `cfg_attr` is incorrect.
     pub fn process_cfg_attrs<T: HasAttrs>(&mut self, node: T) -> T {
         node.map_attrs(|attrs| {
-            attrs.into_iter().flat_map(|attr| self.process_cfg_attr(attr)).collect()
+            attrs.into_iter().filter_map(|attr| self.process_cfg_attr(attr)).collect()
         })
     }
 
-    /// Parse and expand a single `cfg_attr` attribute into a list of attributes
-    /// when the configuration predicate is true, or otherwise expand into an
-    /// empty list of attributes.
-    ///
-    /// Gives a compiler warning when the `cfg_attr` contains no attributes and
-    /// is in the original source file. Gives a compiler error if the syntax of
-    /// the attribute is incorrect
-    fn process_cfg_attr(&mut self, attr: ast::Attribute) -> Vec<ast::Attribute> {
+    fn process_cfg_attr(&mut self, attr: ast::Attribute) -> Option<ast::Attribute> {
         if !attr.check_name("cfg_attr") {
-            return vec![attr];
+            return Some(attr);
         }
 
-        let gate_cfg_attr_multi = if let Some(ref features) = self.features {
-            !features.cfg_attr_multi
-        } else {
-            false
-        };
-        let cfg_attr_span = attr.span;
-
-        let (cfg_predicate, expanded_attrs) = match attr.parse(self.sess, |parser| {
+        let (cfg, path, tokens, span) = match attr.parse(self.sess, |parser| {
             parser.expect(&token::OpenDelim(token::Paren))?;
-
-            let cfg_predicate = parser.parse_meta_item()?;
+            let cfg = parser.parse_meta_item()?;
             parser.expect(&token::Comma)?;
-
-            // Presumably, the majority of the time there will only be one attr.
-            let mut expanded_attrs = Vec::with_capacity(1);
-
-            while !parser.check(&token::CloseDelim(token::Paren)) {
-                let lo = parser.span.lo();
-                let (path, tokens) = parser.parse_meta_item_unrestricted()?;
-                expanded_attrs.push((path, tokens, parser.prev_span.with_lo(lo)));
-                parser.expect_one_of(&[token::Comma], &[token::CloseDelim(token::Paren)])?;
-            }
-
+            let lo = parser.span.lo();
+            let (path, tokens) = parser.parse_meta_item_unrestricted()?;
             parser.expect(&token::CloseDelim(token::Paren))?;
-            Ok((cfg_predicate, expanded_attrs))
+            Ok((cfg, path, tokens, parser.prev_span.with_lo(lo)))
         }) {
             Ok(result) => result,
             Err(mut e) => {
                 e.emit();
-                return Vec::new();
+                return None;
             }
         };
 
-        // Check feature gate and lint on zero attributes in source. Even if the feature is gated,
-        // we still compute as if it wasn't, since the emitted error will stop compilation further
-        // along the compilation.
-        match (expanded_attrs.len(), gate_cfg_attr_multi) {
-            (0, false) => {
-                // FIXME: Emit unused attribute lint here.
-            },
-            (1, _) => {},
-            (_, true) => {
-                emit_feature_err(
-                    self.sess,
-                    "cfg_attr_multi",
-                    cfg_attr_span,
-                    GateIssue::Language,
-                    "cfg_attr with zero or more than one attributes is experimental",
-                );
-            },
-            (_, false) => {}
-        }
-
-        if attr::cfg_matches(&cfg_predicate, self.sess, self.features) {
-            // We call `process_cfg_attr` recursively in case there's a
-            // `cfg_attr` inside of another `cfg_attr`. E.g.
-            //  `#[cfg_attr(false, cfg_attr(true, some_attr))]`.
-            expanded_attrs.into_iter()
-            .flat_map(|(path, tokens, span)| self.process_cfg_attr(ast::Attribute {
+        if attr::cfg_matches(&cfg, self.sess, self.features) {
+            self.process_cfg_attr(ast::Attribute {
                 id: attr::mk_attr_id(),
                 style: attr.style,
                 path,
                 tokens,
                 is_sugared_doc: false,
                 span,
-            }))
-            .collect()
+            })
         } else {
-            Vec::new()
+            None
         }
     }
 
-    /// Determine if a node with the given attributes should be included in this configuration.
+    // Determine if a node with the given attributes should be included in this configuration.
     pub fn in_cfg(&mut self, attrs: &[ast::Attribute]) -> bool {
         attrs.iter().all(|attr| {
             if !is_cfg(attr) {
@@ -226,7 +164,7 @@ impl<'a> StripUnconfigured<'a> {
         })
     }
 
-    /// Visit attributes on expression and statements (but not attributes on items in blocks).
+    // Visit attributes on expression and statements (but not attributes on items in blocks).
     fn visit_expr_attrs(&mut self, attrs: &[ast::Attribute]) {
         // flag the offending attributes
         for attr in attrs.iter() {
@@ -328,7 +266,7 @@ impl<'a> StripUnconfigured<'a> {
         // Anything else is always required, and thus has to error out
         // in case of a cfg attr.
         //
-        // N.B., this is intentionally not part of the fold_expr() function
+        // NB: This is intentionally not part of the fold_expr() function
         //     in order for fold_opt_expr() to be able to avoid this check
         if let Some(attr) = expr.attrs().iter().find(|a| is_cfg(a)) {
             let msg = "removing an expression is not supported in this position";
@@ -421,7 +359,7 @@ impl<'a> fold::Folder for StripUnconfigured<'a> {
     }
 
     fn fold_mac(&mut self, mac: ast::Mac) -> ast::Mac {
-        // Don't configure interpolated AST (cf. issue #34171).
+        // Don't configure interpolated AST (c.f. #34171).
         // Interpolated AST will get configured once the surrounding tokens are parsed.
         mac
     }

@@ -91,7 +91,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
     // Checks that the type of `expr` can be coerced to `expected`.
     //
-    // N.B., this code relies on `self.diverges` to be accurate. In
+    // NB: This code relies on `self.diverges` to be accurate. In
     // particular, assignments to `!` will be permitted if the
     // diverges flag is currently "always".
     pub fn demand_coerce_diag(&self,
@@ -111,35 +111,33 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         let expr_ty = self.resolve_type_vars_with_obligations(checked_ty);
         let mut err = self.report_mismatched_types(&cause, expected, expr_ty, e);
 
-        // If the expected type is an enum (Issue #55250) with any variants whose
-        // sole field is of the found type, suggest such variants. (Issue #42764)
+        // If the expected type is an enum with any variants whose sole
+        // field is of the found type, suggest such variants. See Issue
+        // #42764.
         if let ty::Adt(expected_adt, substs) = expected.sty {
-            if expected_adt.is_enum() {
-                let mut compatible_variants = expected_adt.variants
-                    .iter()
-                    .filter(|variant| variant.fields.len() == 1)
-                    .filter_map(|variant| {
-                        let sole_field = &variant.fields[0];
-                        let sole_field_ty = sole_field.ty(self.tcx, substs);
-                        if self.can_coerce(expr_ty, sole_field_ty) {
-                            let variant_path = self.tcx.item_path_str(variant.did);
-                            Some(variant_path.trim_start_matches("std::prelude::v1::").to_string())
-                        } else {
-                            None
-                        }
-                    }).peekable();
-
-                if compatible_variants.peek().is_some() {
-                    let expr_text = print::to_string(print::NO_ANN, |s| s.print_expr(expr));
-                    let suggestions = compatible_variants
-                        .map(|v| format!("{}({})", v, expr_text));
-                    err.span_suggestions_with_applicability(
-                        expr.span,
-                        "try using a variant of the expected type",
-                        suggestions,
-                        Applicability::MaybeIncorrect,
-                    );
+            let mut compatible_variants = vec![];
+            for variant in &expected_adt.variants {
+                if variant.fields.len() == 1 {
+                    let sole_field = &variant.fields[0];
+                    let sole_field_ty = sole_field.ty(self.tcx, substs);
+                    if self.can_coerce(expr_ty, sole_field_ty) {
+                        let mut variant_path = self.tcx.item_path_str(variant.did);
+                        variant_path = variant_path.trim_left_matches("std::prelude::v1::")
+                            .to_string();
+                        compatible_variants.push(variant_path);
+                    }
                 }
+            }
+            if !compatible_variants.is_empty() {
+                let expr_text = print::to_string(print::NO_ANN, |s| s.print_expr(expr));
+                let suggestions = compatible_variants.iter()
+                    .map(|v| format!("{}({})", v, expr_text)).collect::<Vec<_>>();
+                err.span_suggestions_with_applicability(
+                     expr.span,
+                     "try using a variant of the expected type",
+                     suggestions,
+                     Applicability::MaybeIncorrect,
+                );
             }
         }
 
@@ -203,17 +201,17 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     fn can_use_as_ref(&self, expr: &hir::Expr) -> Option<(Span, &'static str, String)> {
         if let hir::ExprKind::Path(hir::QPath::Resolved(_, ref path)) = expr.node {
             if let hir::def::Def::Local(id) = path.def {
-                let parent = self.tcx.hir().get_parent_node(id);
+                let parent = self.tcx.hir.get_parent_node(id);
                 if let Some(Node::Expr(hir::Expr {
                     id,
                     node: hir::ExprKind::Closure(_, decl, ..),
                     ..
-                })) = self.tcx.hir().find(parent) {
-                    let parent = self.tcx.hir().get_parent_node(*id);
+                })) = self.tcx.hir.find(parent) {
+                    let parent = self.tcx.hir.get_parent_node(*id);
                     if let (Some(Node::Expr(hir::Expr {
                         node: hir::ExprKind::MethodCall(path, span, expr),
                         ..
-                    })), 1) = (self.tcx.hir().find(parent), decl.inputs.len()) {
+                    })), 1) = (self.tcx.hir.find(parent), decl.inputs.len()) {
                         let self_ty = self.tables.borrow().node_id_to_type(expr[0].hir_id);
                         let self_ty = format!("{:?}", self_ty);
                         let name = path.ident.as_str();
@@ -310,20 +308,11 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 };
                 if self.can_coerce(ref_ty, expected) {
                     if let Ok(src) = cm.span_to_snippet(sp) {
-                        let needs_parens = match expr.node {
-                            // parenthesize if needed (Issue #46756)
+                        let sugg_expr = match expr.node { // parenthesize if needed (Issue #46756)
                             hir::ExprKind::Cast(_, _) |
-                            hir::ExprKind::Binary(_, _, _) => true,
-                            // parenthesize borrows of range literals (Issue #54505)
-                            _ if self.is_range_literal(expr) => true,
-                            _ => false,
+                            hir::ExprKind::Binary(_, _, _) => format!("({})", src),
+                            _ => src,
                         };
-                        let sugg_expr = if needs_parens {
-                            format!("({})", src)
-                        } else {
-                            src
-                        };
-
                         if let Some(sugg) = self.can_use_as_ref(expr) {
                             return Some(sugg);
                         }
@@ -384,79 +373,22 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         None
     }
 
-    /// This function checks if the specified expression is a built-in range literal.
-    /// (See: `LoweringContext::lower_expr()` in `src/librustc/hir/lowering.rs`).
-    fn is_range_literal(&self, expr: &hir::Expr) -> bool {
-        use hir::{Path, QPath, ExprKind, TyKind};
-
-        // We support `::std::ops::Range` and `::core::ops::Range` prefixes
-        let is_range_path = |path: &Path| {
-            let mut segs = path.segments.iter()
-                .map(|seg| seg.ident.as_str());
-
-            if let (Some(root), Some(std_core), Some(ops), Some(range), None) =
-                (segs.next(), segs.next(), segs.next(), segs.next(), segs.next())
-            {
-                // "{{root}}" is the equivalent of `::` prefix in Path
-                root == "{{root}}" && (std_core == "std" || std_core == "core")
-                    && ops == "ops" && range.starts_with("Range")
-            } else {
-                false
-            }
-        };
-
-        let span_is_range_literal = |span: &Span| {
-            // Check whether a span corresponding to a range expression
-            // is a range literal, rather than an explicit struct or `new()` call.
-            let source_map = self.tcx.sess.source_map();
-            let end_point = source_map.end_point(*span);
-
-            if let Ok(end_string) = source_map.span_to_snippet(end_point) {
-                !(end_string.ends_with("}") || end_string.ends_with(")"))
-            } else {
-                false
-            }
-        };
-
-        match expr.node {
-            // All built-in range literals but `..=` and `..` desugar to Structs
-            ExprKind::Struct(QPath::Resolved(None, ref path), _, _) |
-            // `..` desugars to its struct path
-            ExprKind::Path(QPath::Resolved(None, ref path)) => {
-                return is_range_path(&path) && span_is_range_literal(&expr.span);
-            }
-
-            // `..=` desugars into `::std::ops::RangeInclusive::new(...)`
-            ExprKind::Call(ref func, _) => {
-                if let ExprKind::Path(QPath::TypeRelative(ref ty, ref segment)) = func.node {
-                    if let TyKind::Path(QPath::Resolved(None, ref path)) = ty.node {
-                        let call_to_new = segment.ident.as_str() == "new";
-
-                        return is_range_path(&path) && span_is_range_literal(&expr.span)
-                            && call_to_new;
-                    }
-                }
-            }
-
-            _ => {}
-        }
-
-        false
-    }
-
     pub fn check_for_cast(&self,
                       err: &mut DiagnosticBuilder<'tcx>,
                       expr: &hir::Expr,
                       checked_ty: Ty<'tcx>,
                       expected_ty: Ty<'tcx>)
                       -> bool {
-        let parent_id = self.tcx.hir().get_parent_node(expr.id);
-        if let Some(parent) = self.tcx.hir().find(parent_id) {
-            // Shouldn't suggest `.into()` on `const`s.
-            if let Node::Item(Item { node: ItemKind::Const(_, _), .. }) = parent {
-                // FIXME(estebank): modify once we decide to suggest `as` casts
-                return false;
+        let parent_id = self.tcx.hir.get_parent_node(expr.id);
+        match self.tcx.hir.find(parent_id) {
+            Some(parent) => {
+                // Shouldn't suggest `.into()` on `const`s.
+                if let Node::Item(Item { node: ItemKind::Const(_, _), .. }) = parent {
+                    // FIXME(estebank): modify once we decide to suggest `as` casts
+                    return false;
+                }
             }
+            None => {}
         };
 
         let will_truncate = "will truncate the source value";
@@ -519,7 +451,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 let suffix_suggestion = format!(
                     "{}{}{}{}",
                     if needs_paren { "(" } else { "" },
-                    src.trim_end_matches(&checked_ty.to_string()),
+                    src.trim_right_matches(&checked_ty.to_string()),
                     expected_ty,
                     if needs_paren { ")" } else { "" },
                 );
@@ -730,7 +662,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                             expr.span,
                             &format!("{}, producing the floating point representation of the \
                                       integer",
-                                     msg),
+                                      msg),
                             into_suggestion,
                             Applicability::MachineApplicable
                         );
@@ -738,7 +670,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                         err.span_suggestion_with_applicability(expr.span,
                             &format!("{}, producing the floating point representation of the \
                                       integer, rounded if necessary",
-                                     msg),
+                                      msg),
                             cast_suggestion,
                             Applicability::MaybeIncorrect  // lossy conversion
                         );
@@ -752,7 +684,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                             expr.span,
                             &format!("{}, producing the floating point representation of the \
                                       integer",
-                                     msg),
+                                      msg),
                             into_suggestion,
                             Applicability::MachineApplicable
                         );
@@ -761,7 +693,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                             expr.span,
                             &format!("{}, producing the floating point representation of the \
                                       integer, rounded if necessary",
-                                     msg),
+                                      msg),
                             cast_suggestion,
                             Applicability::MaybeIncorrect  // lossy conversion
                         );

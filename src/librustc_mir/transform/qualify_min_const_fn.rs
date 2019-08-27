@@ -2,7 +2,6 @@ use rustc::hir::def_id::DefId;
 use rustc::hir;
 use rustc::mir::*;
 use rustc::ty::{self, Predicate, TyCtxt};
-use rustc_target::spec::abi;
 use std::borrow::Cow;
 use syntax_pos::Span;
 
@@ -16,7 +15,7 @@ pub fn is_min_const_fn(
     let mut current = def_id;
     loop {
         let predicates = tcx.predicates_of(current);
-        for (predicate, _) in &predicates.predicates {
+        for predicate in &predicates.predicates {
             match predicate {
                 | Predicate::RegionOutlives(_)
                 | Predicate::TypeOutlives(_)
@@ -149,7 +148,7 @@ fn check_rvalue(
         Rvalue::Len(place) | Rvalue::Discriminant(place) | Rvalue::Ref(_, _, place) => {
             check_place(tcx, mir, place, span, PlaceMode::Read)
         }
-        Rvalue::Cast(CastKind::Misc, operand, cast_ty) => {
+        Rvalue::Cast(_, operand, cast_ty) => {
             use rustc::ty::cast::CastTy;
             let cast_in = CastTy::from_ty(operand.ty(mir, tcx)).expect("bad input type for cast");
             let cast_out = CastTy::from_ty(cast_ty).expect("bad output type for cast");
@@ -164,16 +163,6 @@ fn check_rvalue(
                 _ => check_operand(tcx, mir, operand, span),
             }
         }
-        Rvalue::Cast(CastKind::UnsafeFnPointer, _, _) |
-        Rvalue::Cast(CastKind::ClosureFnPointer, _, _) |
-        Rvalue::Cast(CastKind::ReifyFnPointer, _, _) => Err((
-            span,
-            "function pointer casts are not allowed in const fn".into(),
-        )),
-        Rvalue::Cast(CastKind::Unsize, _, _) => Err((
-            span,
-            "unsizing casts are not allowed in const fn".into(),
-        )),
         // binops are fine on integers
         Rvalue::BinaryOp(_, lhs, rhs) | Rvalue::CheckedBinaryOp(_, lhs, rhs) => {
             check_operand(tcx, mir, lhs, span)?;
@@ -188,11 +177,8 @@ fn check_rvalue(
                 ))
             }
         }
-        Rvalue::NullaryOp(NullOp::SizeOf, _) => Ok(()),
-        Rvalue::NullaryOp(NullOp::Box, _) => Err((
-            span,
-            "heap allocations are not allowed in const fn".into(),
-        )),
+        // checked by regular const fn checks
+        Rvalue::NullaryOp(..) => Ok(()),
         Rvalue::UnaryOp(_, operand) => {
             let ty = operand.ty(mir, tcx);
             if ty.is_integral() || ty.is_bool() {
@@ -242,8 +228,8 @@ fn check_statement(
         // These are all NOPs
         | StatementKind::StorageLive(_)
         | StatementKind::StorageDead(_)
-        | StatementKind::Retag { .. }
-        | StatementKind::EscapeToRaw { .. }
+        | StatementKind::Validate(..)
+        | StatementKind::EndRegion(_)
         | StatementKind::AscribeUserType(..)
         | StatementKind::Nop => Ok(()),
     }
@@ -318,8 +304,7 @@ fn check_terminator(
             check_place(tcx, mir, location, span, PlaceMode::Read)?;
             check_operand(tcx, mir, value, span)
         },
-
-        TerminatorKind::FalseEdges { .. } | TerminatorKind::SwitchInt { .. } => Err((
+        TerminatorKind::SwitchInt { .. } => Err((
             span,
             "`if`, `match`, `&&` and `||` are not stable in const fn".into(),
         )),
@@ -333,46 +318,24 @@ fn check_terminator(
         TerminatorKind::Call {
             func,
             args,
-            from_hir_call: _,
             destination: _,
             cleanup: _,
         } => {
             let fn_ty = func.ty(mir, tcx);
             if let ty::FnDef(def_id, _) = fn_ty.sty {
+                if tcx.is_min_const_fn(def_id) {
+                    check_operand(tcx, mir, func, span)?;
 
-                // some intrinsics are waved through if called inside the
-                // standard library. Users never need to call them directly
-                match tcx.fn_sig(def_id).abi() {
-                    abi::Abi::RustIntrinsic => match &tcx.item_name(def_id).as_str()[..] {
-                        | "size_of"
-                        | "min_align_of"
-                        | "needs_drop"
-                        => {},
-                        _ => return Err((
-                            span,
-                            "can only call a curated list of intrinsics in `min_const_fn`".into(),
-                        )),
-                    },
-                    abi::Abi::Rust if tcx.is_min_const_fn(def_id) => {},
-                    abi::Abi::Rust => return Err((
+                    for arg in args {
+                        check_operand(tcx, mir, arg, span)?;
+                    }
+                    Ok(())
+                } else {
+                    Err((
                         span,
                         "can only call other `min_const_fn` within a `min_const_fn`".into(),
-                    )),
-                    abi => return Err((
-                        span,
-                        format!(
-                            "cannot call functions with `{}` abi in `min_const_fn`",
-                            abi,
-                        ).into(),
-                    )),
+                    ))
                 }
-
-                check_operand(tcx, mir, func, span)?;
-
-                for arg in args {
-                    check_operand(tcx, mir, arg, span)?;
-                }
-                Ok(())
             } else {
                 Err((span, "can only call other const fns within const fn".into()))
             }
@@ -386,8 +349,10 @@ fn check_terminator(
             cleanup: _,
         } => check_operand(tcx, mir, cond, span),
 
-        TerminatorKind::FalseUnwind { .. } => {
-            Err((span, "loops are not allowed in const fn".into()))
-        },
+        | TerminatorKind::FalseEdges { .. } | TerminatorKind::FalseUnwind { .. } => span_bug!(
+            terminator.source_info.span,
+            "min_const_fn encountered `{:#?}`",
+            terminator
+        ),
     }
 }

@@ -32,8 +32,8 @@ use syntax_pos::Span;
 
 impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     pub fn resolve_type_vars_in_body(&self, body: &'gcx hir::Body) -> &'gcx ty::TypeckTables<'gcx> {
-        let item_id = self.tcx.hir().body_owner(body.id());
-        let item_def_id = self.tcx.hir().local_def_id(item_id);
+        let item_id = self.tcx.hir.body_owner(body.id());
+        let item_def_id = self.tcx.hir.local_def_id(item_id);
 
         // This attribute causes us to dump some writeback information
         // in the form of errors, which is used for unit tests.
@@ -52,11 +52,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         wbcx.visit_cast_types();
         wbcx.visit_free_region_map();
         wbcx.visit_user_provided_tys();
-        wbcx.visit_user_provided_sigs();
 
         let used_trait_imports = mem::replace(
             &mut self.tables.borrow_mut().used_trait_imports,
-            Lrc::new(DefIdSet::default()),
+            Lrc::new(DefIdSet()),
         );
         debug!(
             "used_trait_imports({:?}) = {:?}",
@@ -99,7 +98,7 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
         body: &'gcx hir::Body,
         rustc_dump_user_substs: bool,
     ) -> WritebackCx<'cx, 'gcx, 'tcx> {
-        let owner = fcx.tcx.hir().definitions().node_to_hir_id(body.id().node_id);
+        let owner = fcx.tcx.hir.definitions().node_to_hir_id(body.id().node_id);
 
         WritebackCx {
             fcx,
@@ -115,7 +114,7 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
 
     fn write_ty_to_tables(&mut self, hir_id: hir::HirId, ty: Ty<'gcx>) {
         debug!("write_ty_to_tables({:?}, {:?})", hir_id, ty);
-        assert!(!ty.needs_infer() && !ty.has_placeholders());
+        assert!(!ty.needs_infer() && !ty.has_skol());
         self.tables.node_types_mut().insert(hir_id, ty);
     }
 
@@ -179,34 +178,39 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
         if let hir::ExprKind::Index(ref base, ref index) = e.node {
             let mut tables = self.fcx.tables.borrow_mut();
 
-            // All valid indexing looks like this; might encounter non-valid indexes at this point
-            if let ty::Ref(_, base_ty, _) = tables.expr_ty_adjusted(&base).sty {
-                let index_ty = tables.expr_ty_adjusted(&index);
-                let index_ty = self.fcx.resolve_type_vars_if_possible(&index_ty);
+            match tables.expr_ty_adjusted(&base).sty {
+                // All valid indexing looks like this
+                ty::Ref(_, base_ty, _) => {
+                    let index_ty = tables.expr_ty_adjusted(&index);
+                    let index_ty = self.fcx.resolve_type_vars_if_possible(&index_ty);
 
-                if base_ty.builtin_index().is_some() && index_ty == self.fcx.tcx.types.usize {
-                    // Remove the method call record
-                    tables.type_dependent_defs_mut().remove(e.hir_id);
-                    tables.node_substs_mut().remove(e.hir_id);
+                    if base_ty.builtin_index().is_some() && index_ty == self.fcx.tcx.types.usize {
+                        // Remove the method call record
+                        tables.type_dependent_defs_mut().remove(e.hir_id);
+                        tables.node_substs_mut().remove(e.hir_id);
 
-                    tables.adjustments_mut().get_mut(base.hir_id).map(|a| {
-                        // Discard the need for a mutable borrow
-                        match a.pop() {
-                            // Extra adjustment made when indexing causes a drop
-                            // of size information - we need to get rid of it
-                            // Since this is "after" the other adjustment to be
-                            // discarded, we do an extra `pop()`
-                            Some(Adjustment {
-                                kind: Adjust::Unsize,
-                                ..
-                            }) => {
-                                // So the borrow discard actually happens here
-                                a.pop();
+                        tables.adjustments_mut().get_mut(base.hir_id).map(|a| {
+                            // Discard the need for a mutable borrow
+                            match a.pop() {
+                                // Extra adjustment made when indexing causes a drop
+                                // of size information - we need to get rid of it
+                                // Since this is "after" the other adjustment to be
+                                // discarded, we do an extra `pop()`
+                                Some(Adjustment {
+                                    kind: Adjust::Unsize,
+                                    ..
+                                }) => {
+                                    // So the borrow discard actually happens here
+                                    a.pop();
+                                }
+                                _ => {}
                             }
-                            _ => {}
-                        }
-                    });
+                        });
+                    }
                 }
+                // Might encounter non-valid indexes at this point, so there
+                // has to be a fall-through
+                _ => {}
             }
         }
     }
@@ -233,7 +237,7 @@ impl<'cx, 'gcx, 'tcx> Visitor<'gcx> for WritebackCx<'cx, 'gcx, 'tcx> {
 
         match e.node {
             hir::ExprKind::Closure(_, _, body, _, _) => {
-                let body = self.fcx.tcx.hir().body(body);
+                let body = self.fcx.tcx.hir.body(body);
                 for arg in &body.arguments {
                     self.visit_node_id(e.span, arg.hir_id);
                 }
@@ -306,7 +310,7 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
                 ty::UpvarCapture::ByValue => ty::UpvarCapture::ByValue,
                 ty::UpvarCapture::ByRef(ref upvar_borrow) => {
                     let r = upvar_borrow.region;
-                    let r = self.resolve(&r, &upvar_id.var_path.hir_id);
+                    let r = self.resolve(&r, &upvar_id.var_id);
                     ty::UpvarCapture::ByRef(ty::UpvarBorrow {
                         kind: upvar_borrow.kind,
                         region: r,
@@ -389,30 +393,9 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
         }
     }
 
-    fn visit_user_provided_sigs(&mut self) {
-        let fcx_tables = self.fcx.tables.borrow();
-        debug_assert_eq!(fcx_tables.local_id_root, self.tables.local_id_root);
-
-        for (&def_id, c_sig) in fcx_tables.user_provided_sigs.iter() {
-            let c_sig = if let Some(c_sig) = self.tcx().lift_to_global(c_sig) {
-                c_sig
-            } else {
-                span_bug!(
-                    self.fcx.tcx.hir().span_if_local(def_id).unwrap(),
-                    "writeback: `{:?}` missing from the global type context",
-                    c_sig
-                );
-            };
-
-            self.tables
-                .user_provided_sigs
-                .insert(def_id, c_sig.clone());
-        }
-    }
-
     fn visit_opaque_types(&mut self, span: Span) {
         for (&def_id, opaque_defn) in self.fcx.opaque_types.borrow().iter() {
-            let node_id = self.tcx().hir().as_local_node_id(def_id).unwrap();
+            let node_id = self.tcx().hir.as_local_node_id(def_id).unwrap();
             let instantiated_ty = self.resolve(&opaque_defn.concrete_ty, &node_id);
 
             let generics = self.tcx().generics_of(def_id);
@@ -462,7 +445,7 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
                                     span,
                                     &format!(
                                         "type parameter `{}` is part of concrete type but not used \
-                                         in parameter list for existential type",
+                                        in parameter list for existential type",
                                         ty,
                                     ),
                                 )
@@ -545,7 +528,7 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
     }
 
     fn visit_field_id(&mut self, node_id: ast::NodeId) {
-        let hir_id = self.tcx().hir().node_to_hir_id(node_id);
+        let hir_id = self.tcx().hir.node_to_hir_id(node_id);
         if let Some(index) = self.fcx
             .tables
             .borrow_mut()
@@ -580,7 +563,7 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
         if let Some(substs) = self.fcx.tables.borrow().node_substs_opt(hir_id) {
             let substs = self.resolve(&substs, &span);
             debug!("write_substs_to_tcx({:?}, {:?})", hir_id, substs);
-            assert!(!substs.needs_infer() && !substs.has_placeholders());
+            assert!(!substs.needs_infer() && !substs.has_skol());
             self.tables.node_substs_mut().insert(hir_id, substs);
         }
 
@@ -591,8 +574,8 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
 
             // Unit-testing mechanism:
             if self.rustc_dump_user_substs {
-                let node_id = self.tcx().hir().hir_to_node_id(hir_id);
-                let span = self.tcx().hir().span(node_id);
+                let node_id = self.tcx().hir.hir_to_node_id(hir_id);
+                let span = self.tcx().hir.span(node_id);
                 self.tcx().sess.span_err(
                     span,
                     &format!("user substs: {:?}", user_substs),
@@ -710,21 +693,21 @@ impl Locatable for Span {
 
 impl Locatable for ast::NodeId {
     fn to_span(&self, tcx: &TyCtxt) -> Span {
-        tcx.hir().span(*self)
+        tcx.hir.span(*self)
     }
 }
 
 impl Locatable for DefIndex {
     fn to_span(&self, tcx: &TyCtxt) -> Span {
-        let node_id = tcx.hir().def_index_to_node_id(*self);
-        tcx.hir().span(node_id)
+        let node_id = tcx.hir.def_index_to_node_id(*self);
+        tcx.hir.span(node_id)
     }
 }
 
 impl Locatable for hir::HirId {
     fn to_span(&self, tcx: &TyCtxt) -> Span {
-        let node_id = tcx.hir().hir_to_node_id(*self);
-        tcx.hir().span(node_id)
+        let node_id = tcx.hir.hir_to_node_id(*self);
+        tcx.hir.span(node_id)
     }
 }
 
@@ -784,7 +767,10 @@ impl<'cx, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for Resolver<'cx, 'gcx, 'tcx> {
     // FIXME This should be carefully checked
     // We could use `self.report_error` but it doesn't accept a ty::Region, right now.
     fn fold_region(&mut self, r: ty::Region<'tcx>) -> ty::Region<'tcx> {
-        self.infcx.fully_resolve(&r).unwrap_or(self.tcx.types.re_static)
+        match self.infcx.fully_resolve(&r) {
+            Ok(r) => r,
+            Err(_) => self.tcx.types.re_static,
+        }
     }
 }
 

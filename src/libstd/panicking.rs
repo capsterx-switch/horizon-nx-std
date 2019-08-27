@@ -1,13 +1,3 @@
-// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Implementation of various bits and pieces of the `panic!` macro and
 //! associated runtime pieces.
 //!
@@ -195,6 +185,16 @@ fn default_hook(info: &PanicInfo) {
     };
     let thread = thread_info::current_thread();
     let name = thread.as_ref().and_then(|t| t.name()).unwrap_or("<unnamed>");
+
+    #[cfg(all(target_os = "horizon-nx", target_arch = "aarch64"))]
+    use process;
+
+    #[cfg(all(target_os = "horizon-nx", target_arch = "aarch64"))]
+    unsafe {
+
+        // TODO: proper panic display (BSOD?)
+        process::exit(0);
+    }
 
     let write = |err: &mut dyn (::io::Write)| {
         let _ = writeln!(err, "thread '{}' panicked at '{}', {}",

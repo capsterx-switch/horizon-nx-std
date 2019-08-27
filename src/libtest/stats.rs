@@ -224,7 +224,7 @@ impl Stats for [f64] {
                 let x = *s - mean;
                 v = v + x * x;
             }
-            // N.B., this is _supposed to be_ len-1, not len. If you
+            // NB: this is _supposed to be_ len-1, not len. If you
             // change it back to len, you will be calculating a
             // population variance, not a sample variance.
             let denom = (self.len() - 1) as f64;

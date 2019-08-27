@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use io::prelude::*;
 
 use fmt;
@@ -43,12 +33,12 @@ use time::Duration;
 /// use std::io::prelude::*;
 /// use std::net::TcpStream;
 ///
-/// fn main() -> std::io::Result<()> {
-///     let mut stream = TcpStream::connect("127.0.0.1:34254")?;
+/// {
+///     let mut stream = TcpStream::connect("127.0.0.1:34254").unwrap();
 ///
-///     stream.write(&[1])?;
-///     stream.read(&mut [0; 128])?;
-///     Ok(())
+///     // ignore the Result
+///     let _ = stream.write(&[1]);
+///     let _ = stream.read(&mut [0; 128]); // ignore here too
 /// } // the stream is closed here
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -729,6 +719,9 @@ impl TcpListener {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
+        // On WASM, `TcpStream` is uninhabited (as it's unsupported) and so
+        // the `a` variable here is technically unused.
+        #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
         self.0.accept().map(|(a, b)| (TcpStream(a), b))
     }
 
@@ -1678,17 +1671,6 @@ mod tests {
             }
             t!(txdone.send(()));
         })
-    }
-
-    #[test]
-    fn connect_timeout_unroutable() {
-        // this IP is unroutable, so connections should always time out,
-        // provided the network is reachable to begin with.
-        let addr = "10.255.255.1:80".parse().unwrap();
-        let e = TcpStream::connect_timeout(&addr, Duration::from_millis(250)).unwrap_err();
-        assert!(e.kind() == io::ErrorKind::TimedOut ||
-                e.kind() == io::ErrorKind::Other,
-                "bad error: {} {:?}", e, e.kind());
     }
 
     #[test]

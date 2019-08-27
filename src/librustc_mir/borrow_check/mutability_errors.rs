@@ -16,7 +16,6 @@ use rustc::mir::TerminatorKind;
 use rustc::ty::{self, Const, DefIdTree, TyS, TyKind, TyCtxt};
 use rustc_data_structures::indexed_vec::Idx;
 use syntax_pos::Span;
-use syntax_pos::symbol::keywords;
 
 use dataflow::move_paths::InitLocation;
 use borrow_check::MirBorrowckCtxt;
@@ -180,9 +179,9 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
             AccessKind::Move => {
                 err = self.infcx.tcx
                     .cannot_move_out_of(span, &(item_msg + &reason), Origin::Mir);
-                err.span_label(span, "cannot move");
-                err.buffer(&mut self.errors_buffer);
-                return;
+                act = "move";
+                acted_on = "moved";
+                span
             }
             AccessKind::Mutate => {
                 err = self.infcx.tcx
@@ -208,7 +207,7 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
                     format!(
                         "mutable borrow occurs due to use of `{}` in closure",
                         // always Some() if the message is printed.
-                        self.describe_place(access_place).unwrap_or_default(),
+                        self.describe_place(access_place).unwrap_or(String::new()),
                     )
                 );
                 borrow_span
@@ -218,72 +217,6 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
         debug!("report_mutability_error: act={:?}, acted_on={:?}", act, acted_on);
 
         match the_place_err {
-            // Suggest making an existing shared borrow in a struct definition a mutable borrow.
-            //
-            // This is applicable when we have a deref of a field access to a deref of a local -
-            // something like `*((*_1).0`. The local that we get will be a reference to the
-            // struct we've got a field access of (it must be a reference since there's a deref
-            // after the field access).
-            Place::Projection(box Projection {
-                base: Place::Projection(box Projection {
-                    base: Place::Projection(box Projection {
-                        base,
-                        elem: ProjectionElem::Deref,
-                    }),
-                    elem: ProjectionElem::Field(field, _),
-                }),
-                elem: ProjectionElem::Deref,
-            }) => {
-                err.span_label(span, format!("cannot {ACT}", ACT = act));
-
-                if let Some((span, message)) = annotate_struct_field(
-                    self.infcx.tcx,
-                    base.ty(self.mir, self.infcx.tcx).to_ty(self.infcx.tcx),
-                    field,
-                ) {
-                    err.span_suggestion_with_applicability(
-                        span,
-                        "consider changing this to be mutable",
-                        message,
-                        Applicability::MaybeIncorrect,
-                    );
-                }
-            },
-
-            // Suggest removing a `&mut` from the use of a mutable reference.
-            Place::Local(local)
-                if {
-                    self.mir.local_decls.get(*local).map(|local_decl| {
-                        if let ClearCrossCrate::Set(
-                            mir::BindingForm::ImplicitSelf(kind)
-                        ) = local_decl.is_user_variable.as_ref().unwrap() {
-                            // Check if the user variable is a `&mut self` and we can therefore
-                            // suggest removing the `&mut`.
-                            //
-                            // Deliberately fall into this case for all implicit self types,
-                            // so that we don't fall in to the next case with them.
-                            *kind == mir::ImplicitSelfKind::MutRef
-                        } else if Some(keywords::SelfLower.name()) == local_decl.name {
-                            // Otherwise, check if the name is the self kewyord - in which case
-                            // we have an explicit self. Do the same thing in this case and check
-                            // for a `self: &mut Self` to suggest removing the `&mut`.
-                            if let ty::TyKind::Ref(
-                                _, _, hir::Mutability::MutMutable
-                            ) = local_decl.ty.sty {
-                                true
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    }).unwrap_or(false)
-                } =>
-            {
-                err.span_label(span, format!("cannot {ACT}", ACT = act));
-                err.span_label(span, "try removing `&mut` here");
-            },
-
             // We want to suggest users use `let mut` for local (user
             // variable) mutations...
             Place::Local(local) if self.mir.local_decls[*local].can_be_made_mutable() => {
@@ -317,8 +250,8 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
                 let upvar_hir_id = self.mir.upvar_decls[upvar_index.index()]
                     .var_hir_id
                     .assert_crate_local();
-                let upvar_node_id = self.infcx.tcx.hir().hir_to_node_id(upvar_hir_id);
-                if let Some(Node::Binding(pat)) = self.infcx.tcx.hir().find(upvar_node_id) {
+                let upvar_node_id = self.infcx.tcx.hir.hir_to_node_id(upvar_hir_id);
+                if let Some(Node::Binding(pat)) = self.infcx.tcx.hir.find(upvar_node_id) {
                     if let hir::PatKind::Binding(
                         hir::BindingAnnotation::Unannotated,
                         _,
@@ -383,7 +316,7 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
             {
                 let local_decl = &self.mir.local_decls[*local];
                 let suggestion = match local_decl.is_user_variable.as_ref().unwrap() {
-                    ClearCrossCrate::Set(mir::BindingForm::ImplicitSelf(_)) => {
+                    ClearCrossCrate::Set(mir::BindingForm::ImplicitSelf) => {
                         Some(suggest_ampmut_self(self.infcx.tcx, local_decl))
                     }
 
@@ -408,6 +341,7 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
                             .map(|replacement| (pattern_span, replacement))
                     }
 
+                    //
                     ClearCrossCrate::Set(mir::BindingForm::RefForGuard) => unreachable!(),
 
                     ClearCrossCrate::Clear => bug!("saw cleared local state"),
@@ -504,7 +438,7 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
                                 );
 
                                 let extra = if found {
-                                    String::new()
+                                    String::from("")
                                 } else {
                                     format!(", but it is not implemented for `{}`",
                                             substs.type_at(0))
@@ -572,7 +506,7 @@ fn suggest_ampmut<'cx, 'gcx, 'tcx>(
     opt_ty_info: Option<Span>,
 ) -> (Span, String) {
     let locations = mir.find_assignments(local);
-    if !locations.is_empty() {
+    if locations.len() > 0 {
         let assignment_rhs_span = mir.source_info(locations[0]).span;
         if let Ok(src) = tcx.sess.source_map().span_to_snippet(assignment_rhs_span) {
             if let (true, Some(ws_pos)) = (
@@ -583,7 +517,7 @@ fn suggest_ampmut<'cx, 'gcx, 'tcx>(
                 let ty = &src[ws_pos..];
                 return (assignment_rhs_span, format!("&{} mut {}", lt_name, ty));
             } else if src.starts_with('&') {
-                let borrowed_expr = &src[1..];
+                let borrowed_expr = src[1..].to_string();
                 return (assignment_rhs_span, format!("&mut {}", borrowed_expr));
             }
         }
@@ -622,55 +556,4 @@ fn suggest_ampmut<'cx, 'gcx, 'tcx>(
 
 fn is_closure_or_generator(ty: ty::Ty) -> bool {
     ty.is_closure() || ty.is_generator()
-}
-
-/// Add a suggestion to a struct definition given a field access to a local.
-/// This function expects the local to be a reference to a struct in order to produce a suggestion.
-///
-/// ```text
-/// LL |     s: &'a String
-///    |        ---------- use `&'a mut String` here to make mutable
-/// ```
-fn annotate_struct_field(
-    tcx: TyCtxt<'cx, 'gcx, 'tcx>,
-    ty: ty::Ty<'tcx>,
-    field: &mir::Field,
-) -> Option<(Span, String)> {
-    // Expect our local to be a reference to a struct of some kind.
-    if let ty::TyKind::Ref(_, ty, _) = ty.sty {
-        if let ty::TyKind::Adt(def, _) = ty.sty {
-            let field = def.all_fields().nth(field.index())?;
-            // Use the HIR types to construct the diagnostic message.
-            let node_id = tcx.hir().as_local_node_id(field.did)?;
-            let node = tcx.hir().find(node_id)?;
-            // Now we're dealing with the actual struct that we're going to suggest a change to,
-            // we can expect a field that is an immutable reference to a type.
-            if let hir::Node::Field(field) = node {
-                if let hir::TyKind::Rptr(lifetime, hir::MutTy {
-                    mutbl: hir::Mutability::MutImmutable,
-                    ref ty
-                }) = field.ty.node {
-                    // Get the snippets in two parts - the named lifetime (if there is one) and
-                    // type being referenced, that way we can reconstruct the snippet without loss
-                    // of detail.
-                    let type_snippet = tcx.sess.source_map().span_to_snippet(ty.span).ok()?;
-                    let lifetime_snippet = if !lifetime.is_elided() {
-                        format!("{} ", tcx.sess.source_map().span_to_snippet(lifetime.span).ok()?)
-                    } else {
-                        String::new()
-                    };
-
-                    return Some((
-                        field.ty.span,
-                        format!(
-                            "&{}mut {}",
-                            lifetime_snippet, &*type_snippet,
-                        ),
-                    ));
-                }
-            }
-        }
-    }
-
-    None
 }

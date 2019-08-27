@@ -14,6 +14,7 @@ use syntax::ast::NodeId;
 use rustc::mir::{BasicBlock, Mir};
 
 use dot;
+use dot::IntoCow;
 
 use std::fs;
 use std::io;
@@ -137,8 +138,8 @@ where MWF: MirWithFlowState<'tcx>,
                                          block: BasicBlock,
                                          mir: &Mir) -> io::Result<()> {
         // Header rows
-        const HDRS: [&str; 4] = ["ENTRY", "MIR", "BLOCK GENS", "BLOCK KILLS"];
-        const HDR_FMT: &str = "bgcolor=\"grey\"";
+        const HDRS: [&'static str; 4] = ["ENTRY", "MIR", "BLOCK GENS", "BLOCK KILLS"];
+        const HDR_FMT: &'static str = "bgcolor=\"grey\"";
         write!(w, "<table><tr><td rowspan=\"{}\">", HDRS.len())?;
         write!(w, "{:?}", block.index())?;
         write!(w, "</td></tr><tr>")?;
@@ -256,7 +257,7 @@ impl<'a, 'tcx, MWF, P> dot::GraphWalk<'a> for Graph<'a, 'tcx, MWF, P>
             .basic_blocks()
             .indices()
             .collect::<Vec<_>>()
-            .into()
+            .into_cow()
     }
 
     fn edges(&self) -> dot::Edges<Edge> {
@@ -266,7 +267,7 @@ impl<'a, 'tcx, MWF, P> dot::GraphWalk<'a> for Graph<'a, 'tcx, MWF, P>
            .indices()
            .flat_map(|bb| outgoing(mir, bb))
            .collect::<Vec<_>>()
-           .into()
+           .into_cow()
     }
 
     fn source(&self, edge: &Edge) -> Node {

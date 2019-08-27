@@ -79,14 +79,11 @@ impl Lower128Bit {
                 let bin_statement = block.statements.pop().unwrap();
                 let source_info = bin_statement.source_info;
                 let (place, lhs, mut rhs) = match bin_statement.kind {
-                    StatementKind::Assign(place, box rvalue) => {
-                        match rvalue {
-                            Rvalue::BinaryOp(_, lhs, rhs)
-                            | Rvalue::CheckedBinaryOp(_, lhs, rhs) => (place, lhs, rhs),
-                            _ => bug!(),
-                        }
+                    StatementKind::Assign(place, Rvalue::BinaryOp(_, lhs, rhs))
+                    | StatementKind::Assign(place, Rvalue::CheckedBinaryOp(_, lhs, rhs)) => {
+                        (place, lhs, rhs)
                     }
-                    _ => bug!()
+                    _ => bug!("Statement doesn't match pattern any more?"),
                 };
 
                 if let Some(local) = cast_local {
@@ -98,7 +95,7 @@ impl Lower128Bit {
                         source_info: source_info,
                         kind: StatementKind::Assign(
                             Place::Local(local),
-                            box Rvalue::Cast(
+                            Rvalue::Cast(
                                 CastKind::Misc,
                                 rhs,
                                 rhs_override_ty.unwrap())),
@@ -121,7 +118,6 @@ impl Lower128Bit {
                             args: vec![lhs, rhs],
                             destination: Some((place, bb)),
                             cleanup: None,
-                            from_hir_call: false,
                         },
                     });
             }
@@ -143,7 +139,7 @@ fn check_lang_item_type<'a, 'tcx, D>(
 {
     let did = tcx.require_lang_item(lang_item);
     let poly_sig = tcx.fn_sig(did);
-    let sig = poly_sig.no_bound_vars().unwrap();
+    let sig = poly_sig.no_late_bound_regions().unwrap();
     let lhs_ty = lhs.ty(local_decls, tcx);
     let rhs_ty = rhs.ty(local_decls, tcx);
     let place_ty = place.ty(local_decls, tcx).to_ty(tcx);
@@ -158,13 +154,13 @@ fn lower_to<'a, 'tcx, D>(statement: &Statement<'tcx>, local_decls: &D, tcx: TyCt
     where D: HasLocalDecls<'tcx>
 {
     match statement.kind {
-        StatementKind::Assign(_, box Rvalue::BinaryOp(bin_op, ref lhs, _)) => {
+        StatementKind::Assign(_, Rvalue::BinaryOp(bin_op, ref lhs, _)) => {
             let ty = lhs.ty(local_decls, tcx);
             if let Some(is_signed) = sign_of_128bit(ty) {
                 return item_for_op(bin_op, is_signed);
             }
         },
-        StatementKind::Assign(_, box Rvalue::CheckedBinaryOp(bin_op, ref lhs, _)) => {
+        StatementKind::Assign(_, Rvalue::CheckedBinaryOp(bin_op, ref lhs, _)) => {
             let ty = lhs.ty(local_decls, tcx);
             if let Some(is_signed) = sign_of_128bit(ty) {
                 return item_for_checked_op(bin_op, is_signed);

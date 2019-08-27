@@ -9,23 +9,22 @@
 // except according to those terms.
 
 use back::wasm;
+use cc::windows_registry;
 use super::archive::{ArchiveBuilder, ArchiveConfig};
 use super::bytecode::RLIB_BYTECODE_EXTENSION;
-use rustc_codegen_ssa::back::linker::Linker;
-use rustc_codegen_ssa::back::link::{remove, ignored_for_lto, each_linked_rlib, linker_and_flavor,
-    get_linker};
-use rustc_codegen_ssa::back::command::Command;
+use super::linker::Linker;
+use super::command::Command;
 use super::rpath::RPathConfig;
 use super::rpath;
 use metadata::METADATA_FILENAME;
 use rustc::session::config::{self, DebugInfo, OutputFilenames, OutputType, PrintRequest};
-use rustc::session::config::{RUST_CGU_EXT, Lto, Sanitizer};
+use rustc::session::config::{RUST_CGU_EXT, Lto};
 use rustc::session::filesearch;
 use rustc::session::search_paths::PathKind;
 use rustc::session::Session;
-use rustc::middle::cstore::{NativeLibrary, NativeLibraryKind};
+use rustc::middle::cstore::{NativeLibrary, LibSource, NativeLibraryKind};
 use rustc::middle::dependency_format::Linkage;
-use rustc_codegen_ssa::CodegenResults;
+use {CodegenResults, CrateInfo};
 use rustc::util::common::time;
 use rustc_fs_util::fix_windows_verbatim_for_gcc;
 use rustc::hir::def_id::CrateNum;
@@ -48,9 +47,74 @@ use std::str;
 use syntax::attr;
 
 pub use rustc_codegen_utils::link::{find_crate_name, filename_for_input, default_output_for_target,
-                                    invalid_output_for_target, filename_for_metadata,
-                                    out_filename, check_file_is_writeable};
+                                  invalid_output_for_target, out_filename, check_file_is_writeable};
 
+// The third parameter is for env vars, used on windows to set up the
+// path for MSVC to find its DLLs, and gcc to find its bundled
+// toolchain
+pub fn get_linker(sess: &Session, linker: &Path, flavor: LinkerFlavor) -> (PathBuf, Command) {
+    let msvc_tool = windows_registry::find_tool(&sess.opts.target_triple.triple(), "link.exe");
+
+    // If our linker looks like a batch script on Windows then to execute this
+    // we'll need to spawn `cmd` explicitly. This is primarily done to handle
+    // emscripten where the linker is `emcc.bat` and needs to be spawned as
+    // `cmd /c emcc.bat ...`.
+    //
+    // This worked historically but is needed manually since #42436 (regression
+    // was tagged as #42791) and some more info can be found on #44443 for
+    // emscripten itself.
+    let mut cmd = match linker.to_str() {
+        Some(linker) if cfg!(windows) && linker.ends_with(".bat") => Command::bat_script(linker),
+        _ => match flavor {
+            LinkerFlavor::Lld(f) => Command::lld(linker, f),
+            LinkerFlavor::Msvc
+                if sess.opts.cg.linker.is_none() && sess.target.target.options.linker.is_none() =>
+            {
+                Command::new(msvc_tool.as_ref().map(|t| t.path()).unwrap_or(linker))
+            },
+            _ => Command::new(linker),
+        }
+    };
+
+    // The compiler's sysroot often has some bundled tools, so add it to the
+    // PATH for the child.
+    let mut new_path = sess.host_filesearch(PathKind::All)
+                           .get_tools_search_paths();
+    let mut msvc_changed_path = false;
+    if sess.target.target.options.is_like_msvc {
+        if let Some(ref tool) = msvc_tool {
+            cmd.args(tool.args());
+            for &(ref k, ref v) in tool.env() {
+                if k == "PATH" {
+                    new_path.extend(env::split_paths(v));
+                    msvc_changed_path = true;
+                } else {
+                    cmd.env(k, v);
+                }
+            }
+        }
+    }
+
+    if !msvc_changed_path {
+        if let Some(path) = env::var_os("PATH") {
+            new_path.extend(env::split_paths(&path));
+        }
+    }
+    cmd.env("PATH", env::join_paths(new_path).unwrap());
+
+    (linker.to_path_buf(), cmd)
+}
+
+pub fn remove(sess: &Session, path: &Path) {
+    match fs::remove_file(path) {
+        Ok(..) => {}
+        Err(e) => {
+            sess.err(&format!("failed to remove {}: {}",
+                             path.display(),
+                             e));
+        }
+    }
+}
 
 /// Perform the linkage portion of the compilation phase. This will generate all
 /// of the requested outputs for this compilation session.
@@ -72,17 +136,19 @@ pub(crate) fn link_binary(sess: &Session,
            bug!("invalid output type `{:?}` for target os `{}`",
                 crate_type, sess.opts.target_triple);
         }
-        let out_files = link_binary_output(sess,
-                                           codegen_results,
-                                           crate_type,
-                                           outputs,
-                                           crate_name);
-        out_filenames.extend(out_files);
+        let mut out_files = link_binary_output(sess,
+                                               codegen_results,
+                                               crate_type,
+                                               outputs,
+                                               crate_name);
+        out_filenames.append(&mut out_files);
     }
 
     // Remove the temporary object file and metadata if we aren't saving temps
     if !sess.opts.cg.save_temps {
-        if sess.opts.output_types.should_codegen() && !preserve_objects_for_their_debuginfo(sess) {
+        if sess.opts.output_types.should_codegen() &&
+            !preserve_objects_for_their_debuginfo(sess)
+        {
             for obj in codegen_results.modules.iter().filter_map(|m| m.object.as_ref()) {
                 remove(sess, obj);
             }
@@ -119,7 +185,7 @@ fn preserve_objects_for_their_debuginfo(sess: &Session) -> bool {
     // the objects as they're losslessly contained inside the archives.
     let output_linked = sess.crate_types.borrow()
         .iter()
-        .any(|&x| x != config::CrateType::Rlib && x != config::CrateType::Staticlib);
+        .any(|x| *x != config::CrateType::Rlib && *x != config::CrateType::Staticlib);
     if !output_linked {
         return false
     }
@@ -152,6 +218,69 @@ fn preserve_objects_for_their_debuginfo(sess: &Session) -> bool {
     false
 }
 
+fn filename_for_metadata(sess: &Session, crate_name: &str, outputs: &OutputFilenames) -> PathBuf {
+    let out_filename = outputs.single_output_file.clone()
+        .unwrap_or(outputs
+            .out_directory
+            .join(&format!("lib{}{}.rmeta", crate_name, sess.opts.cg.extra_filename)));
+    check_file_is_writeable(&out_filename, sess);
+    out_filename
+}
+
+pub(crate) fn each_linked_rlib(sess: &Session,
+                               info: &CrateInfo,
+                               f: &mut dyn FnMut(CrateNum, &Path)) -> Result<(), String> {
+    let crates = info.used_crates_static.iter();
+    let fmts = sess.dependency_formats.borrow();
+    let fmts = fmts.get(&config::CrateType::Executable)
+                   .or_else(|| fmts.get(&config::CrateType::Staticlib))
+                   .or_else(|| fmts.get(&config::CrateType::Cdylib))
+                   .or_else(|| fmts.get(&config::CrateType::ProcMacro));
+    let fmts = match fmts {
+        Some(f) => f,
+        None => return Err("could not find formats for rlibs".to_string())
+    };
+    for &(cnum, ref path) in crates {
+        match fmts.get(cnum.as_usize() - 1) {
+            Some(&Linkage::NotLinked) |
+            Some(&Linkage::IncludedFromDylib) => continue,
+            Some(_) => {}
+            None => return Err("could not find formats for rlibs".to_string())
+        }
+        let name = &info.crate_name[&cnum];
+        let path = match *path {
+            LibSource::Some(ref p) => p,
+            LibSource::MetadataOnly => {
+                return Err(format!("could not find rlib for: `{}`, found rmeta (metadata) file",
+                                   name))
+            }
+            LibSource::None => {
+                return Err(format!("could not find rlib for: `{}`", name))
+            }
+        };
+        f(cnum, &path);
+    }
+    Ok(())
+}
+
+/// Returns a boolean indicating whether the specified crate should be ignored
+/// during LTO.
+///
+/// Crates ignored during LTO are not lumped together in the "massive object
+/// file" that we create and are linked in their normal rlib states. See
+/// comments below for what crates do not participate in LTO.
+///
+/// It's unusual for a crate to not participate in LTO. Typically only
+/// compiler-specific and unstable crates have a reason to not participate in
+/// LTO.
+pub(crate) fn ignored_for_lto(sess: &Session, info: &CrateInfo, cnum: CrateNum) -> bool {
+    // If our target enables builtin function lowering in LLVM then the
+    // crates providing these functions don't participate in LTO (e.g.
+    // no_builtins or compiler builtins crates).
+    !sess.target.target.options.no_builtins &&
+        (info.is_no_builtins.contains(&cnum) || info.compiler_builtins == Some(cnum))
+}
+
 fn link_binary_output(sess: &Session,
                       codegen_results: &CodegenResults,
                       crate_type: config::CrateType,
@@ -170,10 +299,13 @@ fn link_binary_output(sess: &Session,
         // final destination, with a `fs::rename` call. In order for the rename to
         // always succeed, the temporary file needs to be on the same filesystem,
         // which is why we create it inside the output directory specifically.
-        let metadata_tmpdir = TempFileBuilder::new()
+        let metadata_tmpdir = match TempFileBuilder::new()
             .prefix("rmeta")
             .tempdir_in(out_filename.parent().unwrap())
-            .unwrap_or_else(|err| sess.fatal(&format!("couldn't create a temp dir: {}", err)));
+        {
+            Ok(tmpdir) => tmpdir,
+            Err(err) => sess.fatal(&format!("couldn't create a temp dir: {}", err)),
+        };
         let metadata = emit_metadata(sess, codegen_results, &metadata_tmpdir);
         if let Err(e) = fs::rename(metadata, &out_filename) {
             sess.fatal(&format!("failed to write {}: {}", out_filename.display(), e));
@@ -181,8 +313,10 @@ fn link_binary_output(sess: &Session,
         out_filenames.push(out_filename);
     }
 
-    let tmpdir = TempFileBuilder::new().prefix("rustc").tempdir().unwrap_or_else(|err|
-        sess.fatal(&format!("couldn't create a temp dir: {}", err)));
+    let tmpdir = match TempFileBuilder::new().prefix("rustc").tempdir() {
+        Ok(tmpdir) => tmpdir,
+        Err(err) => sess.fatal(&format!("couldn't create a temp dir: {}", err)),
+    };
 
     if outputs.outputs.should_codegen() {
         let out_filename = out_filename(sess, crate_type, outputs, crate_name);
@@ -212,7 +346,11 @@ fn link_binary_output(sess: &Session,
 }
 
 fn archive_search_paths(sess: &Session) -> Vec<PathBuf> {
-    sess.target_filesearch(PathKind::Native).search_path_dirs()
+    let mut search = Vec::new();
+    sess.target_filesearch(PathKind::Native).for_each_lib_search_path(|path, _| {
+        search.push(path.to_path_buf());
+    });
+    return search;
 }
 
 fn archive_config<'a>(sess: &'a Session,
@@ -231,11 +369,8 @@ fn archive_config<'a>(sess: &'a Session,
 /// building an `.rlib` (stomping over one another), or writing an `.rmeta` into a
 /// directory being searched for `extern crate` (observing an incomplete file).
 /// The returned path is the temporary file containing the complete metadata.
-fn emit_metadata<'a>(
-    sess: &'a Session,
-    codegen_results: &CodegenResults,
-    tmpdir: &TempDir
-) -> PathBuf {
+fn emit_metadata<'a>(sess: &'a Session, codegen_results: &CodegenResults, tmpdir: &TempDir)
+                     -> PathBuf {
     let out_filename = tmpdir.path().join(METADATA_FILENAME);
     let result = fs::write(&out_filename, &codegen_results.metadata.raw_data);
 
@@ -457,6 +592,69 @@ fn print_native_static_libs(sess: &Session, all_native_libs: &[NativeLibrary]) {
     }
 }
 
+pub fn linker_and_flavor(sess: &Session) -> (PathBuf, LinkerFlavor) {
+    fn infer_from(
+        sess: &Session,
+        linker: Option<PathBuf>,
+        flavor: Option<LinkerFlavor>,
+    ) -> Option<(PathBuf, LinkerFlavor)> {
+        match (linker, flavor) {
+            (Some(linker), Some(flavor)) => Some((linker, flavor)),
+            // only the linker flavor is known; use the default linker for the selected flavor
+            (None, Some(flavor)) => Some((PathBuf::from(match flavor {
+                LinkerFlavor::Em  => if cfg!(windows) { "emcc.bat" } else { "emcc" },
+                LinkerFlavor::Gcc => "cc",
+                LinkerFlavor::Ld => "ld",
+                LinkerFlavor::Msvc => "link.exe",
+                LinkerFlavor::Lld(_) => "lld",
+            }), flavor)),
+            (Some(linker), None) => {
+                let stem = linker.file_stem().and_then(|stem| stem.to_str()).unwrap_or_else(|| {
+                    sess.fatal("couldn't extract file stem from specified linker");
+                }).to_owned();
+
+                let flavor = if stem == "emcc" {
+                    LinkerFlavor::Em
+                } else if stem == "gcc" || stem.ends_with("-gcc") {
+                    LinkerFlavor::Gcc
+                } else if stem == "ld" || stem == "ld.lld" || stem.ends_with("-ld") {
+                    LinkerFlavor::Ld
+                } else if stem == "link" || stem == "lld-link" {
+                    LinkerFlavor::Msvc
+                } else if stem == "lld" || stem == "rust-lld" {
+                    LinkerFlavor::Lld(sess.target.target.options.lld_flavor)
+                } else {
+                    // fall back to the value in the target spec
+                    sess.target.target.linker_flavor
+                };
+
+                Some((linker, flavor))
+            },
+            (None, None) => None,
+        }
+    }
+
+    // linker and linker flavor specified via command line have precedence over what the target
+    // specification specifies
+    if let Some(ret) = infer_from(
+        sess,
+        sess.opts.cg.linker.clone(),
+        sess.opts.debugging_opts.linker_flavor,
+    ) {
+        return ret;
+    }
+
+    if let Some(ret) = infer_from(
+        sess,
+        sess.target.target.options.linker.clone().map(PathBuf::from),
+        Some(sess.target.target.linker_flavor),
+    ) {
+        return ret;
+    }
+
+    bug!("Not enough information provided to determine how to invoke the linker");
+}
+
 // Create a dynamic library or executable
 //
 // This will invoke the system linker/cc to create the resulting file. This
@@ -486,14 +684,6 @@ fn link_natively(sess: &Session,
     }
     cmd.args(&sess.opts.debugging_opts.pre_link_arg);
 
-    if sess.target.target.options.is_like_fuchsia {
-        let prefix = match sess.opts.debugging_opts.sanitizer {
-            Some(Sanitizer::Address) => "asan/",
-            _ => "",
-        };
-        cmd.arg(format!("--dynamic-linker={}ld.so.1", prefix));
-    }
-
     let pre_link_objects = if crate_type == config::CrateType::Executable {
         &sess.target.target.options.pre_link_objects_exe
     } else {
@@ -519,8 +709,7 @@ fn link_natively(sess: &Session,
     }
 
     {
-        let target_cpu = ::llvm_util::target_cpu(sess);
-        let mut linker = codegen_results.linker_info.to_linker(cmd, &sess, flavor, target_cpu);
+        let mut linker = codegen_results.linker_info.to_linker(cmd, &sess, flavor);
         link_args(&mut *linker, flavor, sess, crate_type, tmpdir,
                   out_filename, codegen_results);
         cmd = linker.finalize();
@@ -632,8 +821,8 @@ fn link_natively(sess: &Session,
                     .unwrap_or_else(|_| {
                         let mut x = "Non-UTF-8 output: ".to_string();
                         x.extend(s.iter()
-                                  .flat_map(|&b| ascii::escape_default(b))
-                                  .map(char::from));
+                                 .flat_map(|&b| ascii::escape_default(b))
+                                 .map(|b| char::from_u32(b as u32).unwrap()));
                         x
                     })
             }
@@ -688,18 +877,14 @@ fn link_natively(sess: &Session,
         sess.opts.debuginfo != DebugInfo::None &&
         !preserve_objects_for_their_debuginfo(sess)
     {
-        if let Err(e) = Command::new("dsymutil").arg(out_filename).output() {
-            sess.fatal(&format!("failed to run dsymutil: {}", e))
+        match Command::new("dsymutil").arg(out_filename).output() {
+            Ok(..) => {}
+            Err(e) => sess.fatal(&format!("failed to run dsymutil: {}", e)),
         }
     }
 
     if sess.opts.target_triple.triple() == "wasm32-unknown-unknown" {
         wasm::rewrite_imports(&out_filename, &codegen_results.crate_info.wasm_imports);
-        wasm::add_producer_section(
-            &out_filename,
-            &sess.edition().to_string(),
-            option_env!("CFG_VERSION").unwrap_or("unknown"),
-        );
     }
 }
 
@@ -834,7 +1019,8 @@ fn exec_linker(sess: &Session, cmd: &mut Command, out_filename: &Path, tmpdir: &
                 // ensure the line is interpreted as one whole argument.
                 for c in self.arg.chars() {
                     match c {
-                        '\\' | ' ' => write!(f, "\\{}", c)?,
+                        '\\' |
+                        ' ' => write!(f, "\\{}", c)?,
                         c => write!(f, "{}", c)?,
                     }
                 }
@@ -960,16 +1146,12 @@ fn link_args(cmd: &mut dyn Linker,
     // Pass debuginfo flags down to the linker.
     cmd.debuginfo();
 
-    // We want to, by default, prevent the compiler from accidentally leaking in
-    // any system libraries, so we may explicitly ask linkers to not link to any
-    // libraries by default. Note that this does not happen for windows because
-    // windows pulls in some large number of libraries and I couldn't quite
-    // figure out which subset we wanted.
-    //
-    // This is all naturally configurable via the standard methods as well.
-    if !sess.opts.cg.default_linker_libraries.unwrap_or(false) &&
-        t.options.no_default_libraries
-    {
+    // We want to prevent the compiler from accidentally leaking in any system
+    // libraries, so we explicitly ask gcc to not link to any libraries by
+    // default. Note that this does not happen for windows because windows pulls
+    // in some large number of libraries and I couldn't quite figure out which
+    // subset we wanted.
+    if t.options.no_default_libraries {
         cmd.no_default_libraries();
     }
 
@@ -989,7 +1171,7 @@ fn link_args(cmd: &mut dyn Linker,
     //
     // The rationale behind this ordering is that those items lower down in the
     // list can't depend on items higher up in the list. For example nothing can
-    // depend on what we just generated (e.g., that'd be a circular dependency).
+    // depend on what we just generated (e.g. that'd be a circular dependency).
     // Upstream rust libraries are not allowed to depend on our local native
     // libraries as that would violate the structure of the DAG, in that
     // scenario they are required to link to them as well in a shared fashion.
@@ -998,7 +1180,7 @@ fn link_args(cmd: &mut dyn Linker,
     // well, but they also can't depend on what we just started to add to the
     // link line. And finally upstream native libraries can't depend on anything
     // in this DAG so far because they're only dylibs and dylibs can only depend
-    // on other dylibs (e.g., other native deps).
+    // on other dylibs (e.g. other native deps).
     add_local_native_libraries(cmd, sess, codegen_results);
     add_upstream_rust_crates(cmd, sess, codegen_results, crate_type, tmpdir);
     add_upstream_native_libraries(cmd, sess, codegen_results, crate_type);
@@ -1019,10 +1201,11 @@ fn link_args(cmd: &mut dyn Linker,
     // where extern libraries might live, based on the
     // addl_lib_search_paths
     if sess.opts.cg.rpath {
+        let sysroot = sess.sysroot();
         let target_triple = sess.opts.target_triple.triple();
         let mut get_install_prefix_lib_path = || {
             let install_prefix = option_env!("CFG_PREFIX").expect("CFG_PREFIX");
-            let tlib = filesearch::relative_target_lib_path(&sess.sysroot, target_triple);
+            let tlib = filesearch::relative_target_lib_path(sysroot, target_triple);
             let mut path = PathBuf::from(install_prefix);
             path.push(&tlib);
 
@@ -1062,13 +1245,12 @@ fn link_args(cmd: &mut dyn Linker,
 fn add_local_native_libraries(cmd: &mut dyn Linker,
                               sess: &Session,
                               codegen_results: &CodegenResults) {
-    let filesearch = sess.target_filesearch(PathKind::All);
-    for search_path in filesearch.search_paths() {
-        match search_path.kind {
-            PathKind::Framework => { cmd.framework_path(&search_path.dir); }
-            _ => { cmd.include_path(&fix_windows_verbatim_for_gcc(&search_path.dir)); }
+    sess.target_filesearch(PathKind::All).for_each_lib_search_path(|path, k| {
+        match k {
+            PathKind::Framework => { cmd.framework_path(path); }
+            _ => { cmd.include_path(&fix_windows_verbatim_for_gcc(path)); }
         }
-    }
+    });
 
     let relevant_libs = codegen_results.crate_info.used_libraries.iter().filter(|l| {
         relevant_lib(sess, l)
@@ -1135,7 +1317,7 @@ fn add_upstream_rust_crates(cmd: &mut dyn Linker,
     // for the current implementation of the standard library.
     let mut group_end = None;
     let mut group_start = None;
-    let mut end_with = FxHashSet::default();
+    let mut end_with = FxHashSet();
     let info = &codegen_results.crate_info;
     for &(cnum, _) in deps.iter().rev() {
         if let Some(missing) = info.missing_lang_items.get(&cnum) {
@@ -1200,7 +1382,7 @@ fn add_upstream_rust_crates(cmd: &mut dyn Linker,
     // compiler-builtins are always placed last to ensure that they're
     // linked correctly.
     // We must always link the `compiler_builtins` crate statically. Even if it
-    // was already "included" in a dylib (e.g., `libstd` when `-C prefer-dynamic`
+    // was already "included" in a dylib (e.g. `libstd` when `-C prefer-dynamic`
     // is used)
     if let Some(cnum) = compiler_builtins {
         add_static_crate(cmd, sess, codegen_results, tmpdir, crate_type, cnum);
@@ -1247,6 +1429,7 @@ fn add_upstream_rust_crates(cmd: &mut dyn Linker,
         for f in archive.src_files() {
             if f.ends_with(RLIB_BYTECODE_EXTENSION) || f == METADATA_FILENAME {
                 archive.remove_file(&f);
+                continue
             }
         }
 
@@ -1380,7 +1563,7 @@ fn add_upstream_rust_crates(cmd: &mut dyn Linker,
             // because a `dylib` can be reused as an intermediate artifact.
             //
             // Note, though, that we don't want to include the whole of a
-            // compiler-builtins crate (e.g., compiler-rt) because it'll get
+            // compiler-builtins crate (e.g. compiler-rt) because it'll get
             // repeatedly linked anyway.
             if crate_type == config::CrateType::Dylib &&
                 codegen_results.crate_info.compiler_builtins != Some(cnum) {

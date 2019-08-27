@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use borrow_check::location::LocationTable;
+use borrow_check::nll::constraints::ConstraintCategory;
 use borrow_check::nll::region_infer::values::{self, PointIndex, RegionValueElements};
 use borrow_check::nll::type_check::liveness::liveness_map::{LiveVar, NllLivenessMap};
 use borrow_check::nll::type_check::liveness::local_use_map::LocalUseMap;
@@ -18,7 +18,7 @@ use dataflow::move_paths::indexes::MovePathIndex;
 use dataflow::move_paths::MoveData;
 use dataflow::{FlowAtLocation, FlowsAtLocation, MaybeInitializedPlaces};
 use rustc::infer::canonical::QueryRegionConstraint;
-use rustc::mir::{BasicBlock, ConstraintCategory, Local, Location, Mir};
+use rustc::mir::{BasicBlock, Local, Location, Mir};
 use rustc::traits::query::dropck_outlives::DropckOutlivesResult;
 use rustc::traits::query::type_op::outlives::DropckOutlives;
 use rustc::traits::query::type_op::TypeOp;
@@ -49,7 +49,6 @@ pub(super) fn trace(
     flow_inits: &mut FlowAtLocation<MaybeInitializedPlaces<'_, 'gcx, 'tcx>>,
     move_data: &MoveData<'tcx>,
     liveness_map: &NllLivenessMap,
-    location_table: &LocationTable,
 ) {
     debug!("trace()");
 
@@ -68,7 +67,6 @@ pub(super) fn trace(
         move_data,
         liveness_map,
         drop_data: FxHashMap::default(),
-        location_table,
     };
 
     LivenessResults::new(cx).compute_for_all_locals();
@@ -107,9 +105,6 @@ where
 
     /// Map tracking which variables need liveness computation.
     liveness_map: &'me NllLivenessMap,
-
-    /// Maps between a MIR Location and a LocationIndex
-    location_table: &'me LocationTable,
 }
 
 struct DropData<'tcx> {
@@ -458,13 +453,7 @@ impl LivenessContext<'_, '_, '_, '_, 'tcx> {
     ) {
         debug!("add_use_live_facts_for(value={:?})", value);
 
-        Self::make_all_regions_live(
-            self.elements,
-            &mut self.typeck,
-            value,
-            live_at,
-            self.location_table,
-        )
+        Self::make_all_regions_live(self.elements, &mut self.typeck, value, live_at)
     }
 
     /// Some variable with type `live_ty` is "drop live" at `location`
@@ -516,13 +505,7 @@ impl LivenessContext<'_, '_, '_, '_, 'tcx> {
         // All things in the `outlives` array may be touched by
         // the destructor and must be live at this point.
         for &kind in &drop_data.dropck_result.kinds {
-            Self::make_all_regions_live(
-                self.elements,
-                &mut self.typeck,
-                kind,
-                live_at,
-                self.location_table,
-            );
+            Self::make_all_regions_live(self.elements, &mut self.typeck, kind, live_at);
         }
     }
 
@@ -531,7 +514,6 @@ impl LivenessContext<'_, '_, '_, '_, 'tcx> {
         typeck: &mut TypeChecker<'_, '_, 'tcx>,
         value: impl TypeFoldable<'tcx>,
         live_at: &HybridBitSet<PointIndex>,
-        location_table: &LocationTable,
     ) {
         debug!("make_all_regions_live(value={:?})", value);
         debug!(
@@ -550,12 +532,8 @@ impl LivenessContext<'_, '_, '_, '_, 'tcx> {
                 .liveness_constraints
                 .add_elements(live_region_vid, live_at);
 
-            if let Some(facts) = borrowck_context.all_facts {
-                for point in live_at.iter() {
-                    let loc = elements.to_location(point);
-                    facts.region_live_at.push((live_region_vid, location_table.start_index(loc)));
-                    facts.region_live_at.push((live_region_vid, location_table.mid_index(loc)));
-                }
+            if let Some(_) = borrowck_context.all_facts {
+                bug!("polonius liveness facts not implemented yet")
             }
         });
     }

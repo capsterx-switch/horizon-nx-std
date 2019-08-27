@@ -37,7 +37,7 @@ impl<'a, 'tcx, 'rcx, 'cstore> AutoTraitFinder<'a, 'tcx, 'rcx, 'cstore> {
 
     pub fn get_with_node_id(&self, id: ast::NodeId, name: String) -> Vec<Item> {
         get_def_from_node_id(&self.cx, id, name, &|def_ctor, name| {
-            let did = self.cx.tcx.hir().local_def_id(id);
+            let did = self.cx.tcx.hir.local_def_id(id);
             self.get_auto_trait_impls(did, &def_ctor, Some(name))
         })
     }
@@ -84,7 +84,7 @@ impl<'a, 'tcx, 'rcx, 'cstore> AutoTraitFinder<'a, 'tcx, 'rcx, 'cstore> {
             .into_iter()
             .chain(self.get_auto_trait_impl_for(
                 def_id,
-                name,
+                name.clone(),
                 generics.clone(),
                 def_ctor,
                 tcx.require_lang_item(lang_items::SyncTraitLangItem),
@@ -178,7 +178,7 @@ impl<'a, 'tcx, 'rcx, 'cstore> AutoTraitFinder<'a, 'tcx, 'rcx, 'cstore> {
                 inner: ImplItem(Impl {
                     unsafety: hir::Unsafety::Normal,
                     generics: new_generics,
-                    provided_trait_methods: Default::default(),
+                    provided_trait_methods: FxHashSet(),
                     trait_: Some(trait_.clean(self.cx)),
                     for_: ty.clean(self.cx),
                     items: Vec::new(),
@@ -255,7 +255,7 @@ impl<'a, 'tcx, 'rcx, 'cstore> AutoTraitFinder<'a, 'tcx, 'rcx, 'cstore> {
     // handle_lifetimes determines what *needs be* true in order for an impl to hold.
     // lexical_region_resolve, along with much of the rest of the compiler, is concerned
     // with determining if a given set up constraints/predicates *are* met, given some
-    // starting conditions (e.g., user-provided code). For this reason, it's easier
+    // starting conditions (e.g. user-provided code). For this reason, it's easier
     // to perform the calculations we need on our own, rather than trying to make
     // existing inference/solver code do what we want.
     fn handle_lifetimes<'cx>(
@@ -267,14 +267,14 @@ impl<'a, 'tcx, 'rcx, 'cstore> AutoTraitFinder<'a, 'tcx, 'rcx, 'cstore> {
         // all intermediate RegionVids. At the end, all constraints should
         // be between Regions (aka region variables). This gives us the information
         // we need to create the Generics.
-        let mut finished: FxHashMap<_, Vec<_>> = Default::default();
+        let mut finished: FxHashMap<_, Vec<_>> = FxHashMap();
 
-        let mut vid_map: FxHashMap<RegionTarget, RegionDeps> = Default::default();
+        let mut vid_map: FxHashMap<RegionTarget, RegionDeps> = FxHashMap();
 
         // Flattening is done in two parts. First, we insert all of the constraints
         // into a map. Each RegionTarget (either a RegionVid or a Region) maps
         // to its smaller and larger regions. Note that 'larger' regions correspond
-        // to sub-regions in Rust code (e.g., in 'a: 'b, 'a is the larger region).
+        // to sub-regions in Rust code (e.g. in 'a: 'b, 'a is the larger region).
         for constraint in regions.constraints.keys() {
             match constraint {
                 &Constraint::VarSubVar(r1, r2) => {
@@ -407,7 +407,7 @@ impl<'a, 'tcx, 'rcx, 'cstore> AutoTraitFinder<'a, 'tcx, 'rcx, 'cstore> {
     ) -> FxHashSet<GenericParamDef> {
         pred.walk_tys()
             .flat_map(|t| {
-                let mut regions = FxHashSet::default();
+                let mut regions = FxHashSet();
                 tcx.collect_regions(&t, &mut regions);
 
                 regions.into_iter().flat_map(|r| {
@@ -524,7 +524,7 @@ impl<'a, 'tcx, 'rcx, 'cstore> AutoTraitFinder<'a, 'tcx, 'rcx, 'cstore> {
     // display on the docs page. Cleaning the Predicates produces sub-optimal WherePredicate's,
     // so we fix them up:
     //
-    // * Multiple bounds for the same type are coalesced into one: e.g., 'T: Copy', 'T: Debug'
+    // * Multiple bounds for the same type are coalesced into one: e.g. 'T: Copy', 'T: Debug'
     // becomes 'T: Copy + Debug'
     // * Fn bounds are handled specially - instead of leaving it as 'T: Fn(), <T as Fn::Output> =
     // K', we use the dedicated syntax 'T: Fn() -> K'
@@ -545,7 +545,7 @@ impl<'a, 'tcx, 'rcx, 'cstore> AutoTraitFinder<'a, 'tcx, 'rcx, 'cstore> {
         );
 
         // The `Sized` trait must be handled specially, since we only only display it when
-        // it is *not* required (i.e., '?Sized')
+        // it is *not* required (i.e. '?Sized')
         let sized_trait = self.cx
             .tcx
             .require_lang_item(lang_items::SizedTraitLangItem);
@@ -576,12 +576,12 @@ impl<'a, 'tcx, 'rcx, 'cstore> AutoTraitFinder<'a, 'tcx, 'rcx, 'cstore> {
             ..
         } = full_generics.clean(self.cx);
 
-        let mut has_sized = FxHashSet::default();
-        let mut ty_to_bounds: FxHashMap<_, FxHashSet<_>> = Default::default();
-        let mut lifetime_to_bounds: FxHashMap<_, FxHashSet<_>> = Default::default();
-        let mut ty_to_traits: FxHashMap<Type, FxHashSet<Type>> = Default::default();
+        let mut has_sized = FxHashSet();
+        let mut ty_to_bounds: FxHashMap<_, FxHashSet<_>> = FxHashMap();
+        let mut lifetime_to_bounds: FxHashMap<_, FxHashSet<_>> = FxHashMap();
+        let mut ty_to_traits: FxHashMap<Type, FxHashSet<Type>> = FxHashMap();
 
-        let mut ty_to_fn: FxHashMap<Type, (Option<PolyTrait>, Option<Type>)> = Default::default();
+        let mut ty_to_fn: FxHashMap<Type, (Option<PolyTrait>, Option<Type>)> = FxHashMap();
 
         for (orig_p, p) in clean_where_predicates {
             match p {
@@ -629,7 +629,7 @@ impl<'a, 'tcx, 'rcx, 'cstore> AutoTraitFinder<'a, 'tcx, 'rcx, 'cstore> {
                         let is_fn = match &mut b {
                             &mut GenericBound::TraitBound(ref mut p, _) => {
                                 // Insert regions into the for_generics hash map first, to ensure
-                                // that we don't end up with duplicate bounds (e.g., for<'b, 'b>)
+                                // that we don't end up with duplicate bounds (e.g. for<'b, 'b>)
                                 for_generics.extend(p.generic_params.clone());
                                 p.generic_params = for_generics.into_iter().collect();
                                 self.is_fn_ty(&tcx, &p.trait_)
@@ -737,7 +737,7 @@ impl<'a, 'tcx, 'rcx, 'cstore> AutoTraitFinder<'a, 'tcx, 'rcx, 'cstore> {
                                         hir::TraitBoundModifier::None,
                                     ));
 
-                                    // Remove any existing 'plain' bound (e.g., 'T: Iterator`) so
+                                    // Remove any existing 'plain' bound (e.g. 'T: Iterator`) so
                                     // that we don't see a
                                     // duplicate bound like `T: Iterator + Iterator<Item=u8>`
                                     // on the docs page.
@@ -837,7 +837,7 @@ impl<'a, 'tcx, 'rcx, 'cstore> AutoTraitFinder<'a, 'tcx, 'rcx, 'cstore> {
     // auto-trait impls always render in exactly the same way.
     //
     // Using the Debug implementation for sorting prevents us from needing to
-    // write quite a bit of almost entirely useless code (e.g., how should two
+    // write quite a bit of almost entirely useless code (e.g. how should two
     // Types be sorted relative to each other). It also allows us to solve the
     // problem for both WherePredicates and GenericBounds at the same time. This
     // approach is probably somewhat slower, but the small number of items

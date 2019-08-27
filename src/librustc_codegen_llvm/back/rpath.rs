@@ -31,24 +31,25 @@ pub fn get_rpath_flags(config: &mut RPathConfig) -> Vec<String> {
         return Vec::new();
     }
 
+    let mut flags = Vec::new();
+
     debug!("preparing the RPATH!");
 
     let libs = config.used_crates.clone();
     let libs = libs.iter().filter_map(|&(_, ref l)| l.option()).collect::<Vec<_>>();
     let rpaths = get_rpaths(config, &libs);
-    let mut flags = rpaths_to_flags(&rpaths);
+    flags.extend_from_slice(&rpaths_to_flags(&rpaths));
 
     // Use DT_RUNPATH instead of DT_RPATH if available
     if config.linker_is_gnu {
-        flags.push("-Wl,--enable-new-dtags".to_owned());
+        flags.push("-Wl,--enable-new-dtags".to_string());
     }
 
     flags
 }
 
 fn rpaths_to_flags(rpaths: &[String]) -> Vec<String> {
-    let mut ret = Vec::with_capacity(rpaths.len()); // the minimum needed capacity
-
+    let mut ret = Vec::new();
     for rpath in rpaths {
         if rpath.contains(',') {
             ret.push("-Wl,-rpath".into());
@@ -58,8 +59,7 @@ fn rpaths_to_flags(rpaths: &[String]) -> Vec<String> {
             ret.push(format!("-Wl,-rpath,{}", &(*rpath)));
         }
     }
-
-    ret
+    return ret;
 }
 
 fn get_rpaths(config: &mut RPathConfig, libs: &[PathBuf]) -> Vec<String> {
@@ -92,8 +92,7 @@ fn get_rpaths(config: &mut RPathConfig, libs: &[PathBuf]) -> Vec<String> {
 
     // Remove duplicates
     let rpaths = minimize_rpaths(&rpaths);
-
-    rpaths
+    return rpaths;
 }
 
 fn get_rpaths_relative_to_output(config: &mut RPathConfig,
@@ -110,7 +109,7 @@ fn get_rpath_relative_to_output(config: &mut RPathConfig, lib: &Path) -> String 
     };
 
     let cwd = env::current_dir().unwrap();
-    let mut lib = fs::canonicalize(&cwd.join(lib)).unwrap_or_else(|_| cwd.join(lib));
+    let mut lib = fs::canonicalize(&cwd.join(lib)).unwrap_or(cwd.join(lib));
     lib.pop();
     let mut output = cwd.join(&config.out_filename);
     output.pop();
@@ -118,7 +117,8 @@ fn get_rpath_relative_to_output(config: &mut RPathConfig, lib: &Path) -> String 
     let relative = path_relative_from(&lib, &output).unwrap_or_else(||
         panic!("couldn't create relative path from {:?} to {:?}", output, lib));
     // FIXME (#9639): This needs to handle non-utf8 paths
-    format!("{}/{}", prefix, relative.to_str().expect("non-utf8 component in path"))
+    format!("{}/{}", prefix,
+            relative.to_str().expect("non-utf8 component in path"))
 }
 
 // This routine is adapted from the *old* Path's `path_relative_from`
@@ -168,7 +168,7 @@ fn get_install_prefix_rpath(config: &mut RPathConfig) -> String {
     let path = (config.get_install_prefix_lib_path)();
     let path = env::current_dir().unwrap().join(&path);
     // FIXME (#9639): This needs to handle non-utf8 paths
-    path.to_str().expect("non-utf8 component in rpath").to_owned()
+    path.to_str().expect("non-utf8 component in rpath").to_string()
 }
 
 fn minimize_rpaths(rpaths: &[String]) -> Vec<String> {

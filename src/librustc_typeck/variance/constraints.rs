@@ -44,7 +44,7 @@ pub struct Constraint<'a> {
 }
 
 /// To build constraints, we visit one item (type, trait) at a time
-/// and look at its contents. So e.g., if we have
+/// and look at its contents. So e.g. if we have
 ///
 ///     struct Foo<T> {
 ///         b: Bar<T>
@@ -72,7 +72,7 @@ pub fn add_constraints_from_crate<'a, 'tcx>(terms_cx: TermsContext<'a, 'tcx>)
         constraints: Vec::new(),
     };
 
-    tcx.hir().krate().visit_all_item_likes(&mut constraint_cx);
+    tcx.hir.krate().visit_all_item_likes(&mut constraint_cx);
 
     constraint_cx
 }
@@ -131,7 +131,7 @@ impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for ConstraintContext<'a, 'tcx> {
 impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
     fn visit_node_helper(&mut self, id: ast::NodeId) {
         let tcx = self.terms_cx.tcx;
-        let def_id = tcx.hir().local_def_id(id);
+        let def_id = tcx.hir.local_def_id(id);
         self.build_constraints_for_item(def_id);
     }
 
@@ -148,7 +148,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
             return;
         }
 
-        let id = tcx.hir().as_local_node_id(def_id).unwrap();
+        let id = tcx.hir.as_local_node_id(def_id).unwrap();
         let inferred_start = self.terms_cx.inferred_starts[&id];
         let current_item = &CurrentItem { inferred_start };
         match tcx.type_of(def_id).sty {
@@ -311,11 +311,11 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 let contra = self.contravariant(variance);
                 self.add_constraints_from_region(current, r, contra);
 
-                let poly_trait_ref = data
-                    .principal()
-                    .with_self_ty(self.tcx(), self.tcx().types.err);
-                self.add_constraints_from_trait_ref(
-                    current, *poly_trait_ref.skip_binder(), variance);
+                if let Some(p) = data.principal() {
+                    let poly_trait_ref = p.with_self_ty(self.tcx(), self.tcx().types.err);
+                    self.add_constraints_from_trait_ref(
+                        current, *poly_trait_ref.skip_binder(), variance);
+                }
 
                 for projection in data.projection_bounds() {
                     self.add_constraints_from_ty(
@@ -336,10 +336,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 // types, where we use Error as the Self type
             }
 
-            ty::Placeholder(..) |
-            ty::UnnormalizedProjection(..) |
             ty::GeneratorWitness(..) |
-            ty::Bound(..) |
             ty::Infer(..) => {
                 bug!("unexpected type encountered in \
                       variance inference: {}",
@@ -365,7 +362,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
             return;
         }
 
-        let (local, remote) = if let Some(id) = self.tcx().hir().as_local_node_id(def_id) {
+        let (local, remote) = if let Some(id) = self.tcx().hir.as_local_node_id(def_id) {
             (Some(self.terms_cx.inferred_starts[&id]), None)
         } else {
             (None, Some(self.tcx().variances_of(def_id)))
@@ -428,11 +425,12 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 // way early-bound regions do, so we skip them here.
             }
 
+            ty::ReCanonical(_) |
             ty::ReFree(..) |
             ty::ReClosureBound(..) |
             ty::ReScope(..) |
             ty::ReVar(..) |
-            ty::RePlaceholder(..) |
+            ty::ReSkolemized(..) |
             ty::ReEmpty |
             ty::ReErased => {
                 // We don't expect to see anything but 'static or bound

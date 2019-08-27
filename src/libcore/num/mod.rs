@@ -70,7 +70,7 @@ assert_eq!(size_of::<Option<std::num::", stringify!($Ty), ">>(), size_of::<", st
                 #[stable(feature = "nonzero", since = "1.28.0")]
                 #[inline]
                 pub const unsafe fn new_unchecked(n: $Int) -> Self {
-                    $Ty(unsafe { NonZero(n) })
+                    $Ty(NonZero(n))
                 }
 
                 /// Create a non-zero if the given value is not zero.
@@ -78,7 +78,7 @@ assert_eq!(size_of::<Option<std::num::", stringify!($Ty), ">>(), size_of::<", st
                 #[inline]
                 pub fn new(n: $Int) -> Option<Self> {
                     if n != 0 {
-                        Some($Ty(unsafe { NonZero(n) }))
+                        Some($Ty(NonZero(n)))
                     } else {
                         None
                     }
@@ -91,13 +91,6 @@ assert_eq!(size_of::<Option<std::num::", stringify!($Ty), ">>(), size_of::<", st
                     self.0 .0
                 }
 
-            }
-
-            #[stable(feature = "from_nonzero", since = "1.31.0")]
-            impl From<$Ty> for $Int {
-                fn from(nonzero: $Ty) -> Self {
-                    nonzero.0 .0
-                }
             }
 
             impl_nonzero_fmt! {
@@ -216,7 +209,6 @@ $EndFeature, "
 ```"),
             #[stable(feature = "rust1", since = "1.0.0")]
             #[inline]
-            #[rustc_promotable]
             pub const fn min_value() -> Self {
                 !0 ^ ((!0 as $UnsignedT) >> 1) as Self
             }
@@ -235,7 +227,6 @@ $EndFeature, "
 ```"),
             #[stable(feature = "rust1", since = "1.0.0")]
             #[inline]
-            #[rustc_promotable]
             pub const fn max_value() -> Self {
                 !Self::min_value()
             }
@@ -350,6 +341,14 @@ $EndFeature, "
             }
         }
 
+        /// no docs here
+        #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn rotate_left(self, n: u32) -> Self {
+            (self as $UnsignedT).rotate_left(n) as Self
+        }
+
         doc_comment! {
             concat!("Shifts the bits to the left by a specified amount, `n`,
 wrapping the truncated bits to the end of the resulting integer.
@@ -369,9 +368,18 @@ assert_eq!(n.rotate_left(", $rot, "), m);
             #[stable(feature = "rust1", since = "1.0.0")]
             #[rustc_const_unstable(feature = "const_int_rotate")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn rotate_left(self, n: u32) -> Self {
                 (self as $UnsignedT).rotate_left(n) as Self
             }
+        }
+
+        /// no docs here
+        #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn rotate_right(self, n: u32) -> Self {
+            (self as $UnsignedT).rotate_right(n) as Self
         }
 
         doc_comment! {
@@ -394,6 +402,7 @@ assert_eq!(n.rotate_right(", $rot, "), m);
             #[stable(feature = "rust1", since = "1.0.0")]
             #[rustc_const_unstable(feature = "const_int_rotate")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn rotate_right(self, n: u32) -> Self {
                 (self as $UnsignedT).rotate_right(n) as Self
             }
@@ -421,6 +430,14 @@ assert_eq!(m, ", $swapped, ");
             }
         }
 
+        /// no docs here
+        #[unstable(feature = "reverse_bits", issue = "48763")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn reverse_bits(self) -> Self {
+            (self as $UnsignedT).reverse_bits() as Self
+        }
+
         doc_comment! {
             concat!("Reverses the bit pattern of the integer.
 
@@ -439,6 +456,7 @@ assert_eq!(m, ", $reversed, ");
             #[unstable(feature = "reverse_bits", issue = "48763")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn reverse_bits(self) -> Self {
                 (self as $UnsignedT).reverse_bits() as Self
             }
@@ -989,6 +1007,16 @@ $EndFeature, "
             }
         }
 
+        /// no docs here
+        #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn wrapping_add(self, rhs: Self) -> Self {
+            unsafe {
+                intrinsics::overflowing_add(self, rhs)
+            }
+        }
+
         doc_comment! {
             concat!("Wrapping (modular) addition. Computes `self + rhs`, wrapping around at the
 boundary of the type.
@@ -1006,10 +1034,21 @@ $EndFeature, "
             #[stable(feature = "rust1", since = "1.0.0")]
             #[rustc_const_unstable(feature = "const_int_wrapping")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn wrapping_add(self, rhs: Self) -> Self {
                 unsafe {
                     intrinsics::overflowing_add(self, rhs)
                 }
+            }
+        }
+
+        /// no docs here
+        #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn wrapping_sub(self, rhs: Self) -> Self {
+            unsafe {
+                intrinsics::overflowing_sub(self, rhs)
             }
         }
 
@@ -1030,10 +1069,21 @@ $EndFeature, "
             #[stable(feature = "rust1", since = "1.0.0")]
             #[rustc_const_unstable(feature = "const_int_wrapping")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn wrapping_sub(self, rhs: Self) -> Self {
                 unsafe {
                     intrinsics::overflowing_sub(self, rhs)
                 }
+            }
+        }
+
+        /// no docs here
+        #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn wrapping_mul(self, rhs: Self) -> Self {
+            unsafe {
+                intrinsics::overflowing_mul(self, rhs)
             }
         }
 
@@ -1053,6 +1103,7 @@ $EndFeature, "
             #[stable(feature = "rust1", since = "1.0.0")]
             #[rustc_const_unstable(feature = "const_int_wrapping")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn wrapping_mul(self, rhs: Self) -> Self {
                 unsafe {
                     intrinsics::overflowing_mul(self, rhs)
@@ -1196,6 +1247,16 @@ $EndFeature, "
             }
         }
 
+        /// no docs here
+        #[stable(feature = "num_wrapping", since = "1.2.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn wrapping_shl(self, rhs: u32) -> Self {
+            unsafe {
+                intrinsics::unchecked_shl(self, (rhs & ($BITS - 1)) as $SelfT)
+            }
+        }
+
         doc_comment! {
             concat!("Panic-free bitwise shift-left; yields `self << mask(rhs)`, where `mask` removes
 any high-order bits of `rhs` that would cause the shift to exceed the bitwidth of the type.
@@ -1217,10 +1278,21 @@ $EndFeature, "
             #[stable(feature = "num_wrapping", since = "1.2.0")]
             #[rustc_const_unstable(feature = "const_int_wrapping")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn wrapping_shl(self, rhs: u32) -> Self {
                 unsafe {
                     intrinsics::unchecked_shl(self, (rhs & ($BITS - 1)) as $SelfT)
                 }
+            }
+        }
+
+        /// no docs here
+        #[stable(feature = "num_wrapping", since = "1.2.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn wrapping_shr(self, rhs: u32) -> Self {
+            unsafe {
+                intrinsics::unchecked_shr(self, (rhs & ($BITS - 1)) as $SelfT)
             }
         }
 
@@ -1245,6 +1317,7 @@ $EndFeature, "
             #[stable(feature = "num_wrapping", since = "1.2.0")]
             #[rustc_const_unstable(feature = "const_int_wrapping")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn wrapping_shr(self, rhs: u32) -> Self {
                 unsafe {
                     intrinsics::unchecked_shr(self, (rhs & ($BITS - 1)) as $SelfT)
@@ -1323,6 +1396,18 @@ $EndFeature, "
             }
         }
 
+        /// no docs here
+        #[stable(feature = "wrapping", since = "1.7.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn overflowing_add(self, rhs: Self) -> (Self, bool) {
+            let (a, b) = unsafe {
+                intrinsics::add_with_overflow(self as $ActualT,
+                                                rhs as $ActualT)
+            };
+            (a as Self, b)
+        }
+
         doc_comment! {
             concat!("Calculates `self` + `rhs`
 
@@ -1343,6 +1428,7 @@ assert_eq!(", stringify!($SelfT), "::MAX.overflowing_add(1), (", stringify!($Sel
             #[stable(feature = "wrapping", since = "1.7.0")]
             #[rustc_const_unstable(feature = "const_int_overflowing")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn overflowing_add(self, rhs: Self) -> (Self, bool) {
                 let (a, b) = unsafe {
                     intrinsics::add_with_overflow(self as $ActualT,
@@ -1350,6 +1436,18 @@ assert_eq!(", stringify!($SelfT), "::MAX.overflowing_add(1), (", stringify!($Sel
                 };
                 (a as Self, b)
             }
+        }
+
+        /// no docs here
+        #[stable(feature = "wrapping", since = "1.7.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn overflowing_sub(self, rhs: Self) -> (Self, bool) {
+            let (a, b) = unsafe {
+                intrinsics::sub_with_overflow(self as $ActualT,
+                                                rhs as $ActualT)
+            };
+            (a as Self, b)
         }
 
         doc_comment! {
@@ -1372,6 +1470,7 @@ assert_eq!(", stringify!($SelfT), "::MIN.overflowing_sub(1), (", stringify!($Sel
             #[stable(feature = "wrapping", since = "1.7.0")]
             #[rustc_const_unstable(feature = "const_int_overflowing")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn overflowing_sub(self, rhs: Self) -> (Self, bool) {
                 let (a, b) = unsafe {
                     intrinsics::sub_with_overflow(self as $ActualT,
@@ -1379,6 +1478,18 @@ assert_eq!(", stringify!($SelfT), "::MIN.overflowing_sub(1), (", stringify!($Sel
                 };
                 (a as Self, b)
             }
+        }
+
+        /// no docs here
+        #[stable(feature = "wrapping", since = "1.7.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn overflowing_mul(self, rhs: Self) -> (Self, bool) {
+            let (a, b) = unsafe {
+                intrinsics::mul_with_overflow(self as $ActualT,
+                                                rhs as $ActualT)
+            };
+            (a as Self, b)
         }
 
         doc_comment! {
@@ -1399,6 +1510,7 @@ $EndFeature, "
             #[stable(feature = "wrapping", since = "1.7.0")]
             #[rustc_const_unstable(feature = "const_int_overflowing")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn overflowing_mul(self, rhs: Self) -> (Self, bool) {
                 let (a, b) = unsafe {
                     intrinsics::mul_with_overflow(self as $ActualT,
@@ -1544,7 +1656,7 @@ assert_eq!(", stringify!($SelfT), "::MIN.overflowing_mod_euc(-1), (0, true));
             concat!("Negates self, overflowing if this is equal to the minimum value.
 
 Returns a tuple of the negated version of self along with a boolean indicating whether an overflow
-happened. If `self` is the minimum value (e.g., `i32::MIN` for values of type `i32`), then the
+happened. If `self` is the minimum value (e.g. `i32::MIN` for values of type `i32`), then the
 minimum value will be returned again and `true` will be returned for an overflow happening.
 
 # Examples
@@ -1569,6 +1681,14 @@ assert_eq!(", stringify!($SelfT), "::MIN.overflowing_neg(), (", stringify!($Self
             }
         }
 
+        /// no docs here
+        #[stable(feature = "wrapping", since = "1.7.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn overflowing_shl(self, rhs: u32) -> (Self, bool) {
+            (self.wrapping_shl(rhs), (rhs > ($BITS - 1)))
+        }
+
         doc_comment! {
             concat!("Shifts self left by `rhs` bits.
 
@@ -1588,9 +1708,18 @@ $EndFeature, "
             #[stable(feature = "wrapping", since = "1.7.0")]
             #[rustc_const_unstable(feature = "const_int_overflowing")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn overflowing_shl(self, rhs: u32) -> (Self, bool) {
                 (self.wrapping_shl(rhs), (rhs > ($BITS - 1)))
             }
+        }
+
+        /// no docs here
+        #[stable(feature = "wrapping", since = "1.7.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn overflowing_shr(self, rhs: u32) -> (Self, bool) {
+            (self.wrapping_shr(rhs), (rhs > ($BITS - 1)))
         }
 
         doc_comment! {
@@ -1612,6 +1741,7 @@ $EndFeature, "
             #[stable(feature = "wrapping", since = "1.7.0")]
             #[rustc_const_unstable(feature = "const_int_overflowing")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn overflowing_shr(self, rhs: u32) -> (Self, bool) {
                 (self.wrapping_shr(rhs), (rhs > ($BITS - 1)))
             }
@@ -1621,7 +1751,7 @@ $EndFeature, "
             concat!("Computes the absolute value of `self`.
 
 Returns a tuple of the absolute version of self along with a boolean indicating whether an overflow
-happened. If self is the minimum value (e.g., ", stringify!($SelfT), "::MIN for values of type
+happened. If self is the minimum value (e.g. ", stringify!($SelfT), "::MIN for values of type
  ", stringify!($SelfT), "), then the minimum value will be returned again and true will be returned
 for an overflow happening.
 
@@ -1876,6 +2006,12 @@ $EndFeature, "
             }
         }
 
+        /// no docs here
+        #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn is_positive(self) -> bool { self > 0 }
+
         doc_comment! {
             concat!("Returns `true` if `self` is positive and `false` if the number is zero or
 negative.
@@ -1892,8 +2028,15 @@ $EndFeature, "
             #[stable(feature = "rust1", since = "1.0.0")]
             #[rustc_const_unstable(feature = "const_int_sign")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn is_positive(self) -> bool { self > 0 }
         }
+
+        /// no docs here
+        #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn is_negative(self) -> bool { self < 0 }
 
         doc_comment! {
             concat!("Returns `true` if `self` is negative and `false` if the number is zero or
@@ -1911,7 +2054,16 @@ $EndFeature, "
             #[stable(feature = "rust1", since = "1.0.0")]
             #[rustc_const_unstable(feature = "const_int_sign")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn is_negative(self) -> bool { self < 0 }
+        }
+
+        /// no docs here
+        #[unstable(feature = "int_to_from_bytes", issue = "52963")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn to_be_bytes(self) -> [u8; mem::size_of::<Self>()] {
+            self.to_be().to_ne_bytes()
         }
 
         doc_comment! {
@@ -1921,15 +2073,26 @@ big-endian (network) byte order.
 # Examples
 
 ```
+#![feature(int_to_from_bytes)]
+
 let bytes = ", $swap_op, stringify!($SelfT), ".to_be_bytes();
 assert_eq!(bytes, ", $be_bytes, ");
 ```"),
-            #[stable(feature = "int_to_from_bytes", since = "1.32.0")]
+            #[unstable(feature = "int_to_from_bytes", issue = "52963")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn to_be_bytes(self) -> [u8; mem::size_of::<Self>()] {
                 self.to_be().to_ne_bytes()
             }
+        }
+
+        /// no docs here
+        #[unstable(feature = "int_to_from_bytes", issue = "52963")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn to_le_bytes(self) -> [u8; mem::size_of::<Self>()] {
+            self.to_le().to_ne_bytes()
         }
 
 doc_comment! {
@@ -1939,15 +2102,26 @@ little-endian byte order.
 # Examples
 
 ```
+#![feature(int_to_from_bytes)]
+
 let bytes = ", $swap_op, stringify!($SelfT), ".to_le_bytes();
 assert_eq!(bytes, ", $le_bytes, ");
 ```"),
-            #[stable(feature = "int_to_from_bytes", since = "1.32.0")]
+            #[unstable(feature = "int_to_from_bytes", issue = "52963")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn to_le_bytes(self) -> [u8; mem::size_of::<Self>()] {
                 self.to_le().to_ne_bytes()
             }
+        }
+
+        /// no docs here
+        #[unstable(feature = "int_to_from_bytes", issue = "52963")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn to_ne_bytes(self) -> [u8; mem::size_of::<Self>()] {
+            unsafe { mem::transmute(self) }
         }
 
         doc_comment! {
@@ -1965,6 +2139,8 @@ instead.
 # Examples
 
 ```
+#![feature(int_to_from_bytes)]
+
 let bytes = ", $swap_op, stringify!($SelfT), ".to_ne_bytes();
 assert_eq!(bytes, if cfg!(target_endian = \"big\") {
         ", $be_bytes, "
@@ -1972,12 +2148,21 @@ assert_eq!(bytes, if cfg!(target_endian = \"big\") {
         ", $le_bytes, "
     });
 ```"),
-            #[stable(feature = "int_to_from_bytes", since = "1.32.0")]
+            #[unstable(feature = "int_to_from_bytes", issue = "52963")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn to_ne_bytes(self) -> [u8; mem::size_of::<Self>()] {
                 unsafe { mem::transmute(self) }
             }
+        }
+
+        /// no docs here
+        #[unstable(feature = "int_to_from_bytes", issue = "52963")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn from_be_bytes(bytes: [u8; mem::size_of::<Self>()]) -> Self {
+            Self::from_be(Self::from_ne_bytes(bytes))
         }
 
 doc_comment! {
@@ -1987,28 +2172,26 @@ big endian.
 # Examples
 
 ```
+#![feature(int_to_from_bytes)]
+
 let value = ", stringify!($SelfT), "::from_be_bytes(", $be_bytes, ");
 assert_eq!(value, ", $swap_op, ");
-```
-
-When starting from a slice rather than an array, fallible conversion APIs can be used:
-
-```
-#![feature(try_from)]
-use std::convert::TryInto;
-
-fn read_be_", stringify!($SelfT), "(input: &mut &[u8]) -> ", stringify!($SelfT), " {
-    let (int_bytes, rest) = input.split_at(std::mem::size_of::<", stringify!($SelfT), ">());
-    *input = rest;
-    ", stringify!($SelfT), "::from_be_bytes(int_bytes.try_into().unwrap())
-}
 ```"),
-            #[stable(feature = "int_to_from_bytes", since = "1.32.0")]
+            #[unstable(feature = "int_to_from_bytes", issue = "52963")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn from_be_bytes(bytes: [u8; mem::size_of::<Self>()]) -> Self {
                 Self::from_be(Self::from_ne_bytes(bytes))
             }
+        }
+
+        /// no docs here
+        #[unstable(feature = "int_to_from_bytes", issue = "52963")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn from_le_bytes(bytes: [u8; mem::size_of::<Self>()]) -> Self {
+            Self::from_le(Self::from_ne_bytes(bytes))
         }
 
 doc_comment! {
@@ -2019,28 +2202,26 @@ little endian.
 # Examples
 
 ```
+#![feature(int_to_from_bytes)]
+
 let value = ", stringify!($SelfT), "::from_le_bytes(", $le_bytes, ");
 assert_eq!(value, ", $swap_op, ");
-```
-
-When starting from a slice rather than an array, fallible conversion APIs can be used:
-
-```
-#![feature(try_from)]
-use std::convert::TryInto;
-
-fn read_be_", stringify!($SelfT), "(input: &mut &[u8]) -> ", stringify!($SelfT), " {
-    let (int_bytes, rest) = input.split_at(std::mem::size_of::<", stringify!($SelfT), ">());
-    *input = rest;
-    ", stringify!($SelfT), "::from_be_bytes(int_bytes.try_into().unwrap())
-}
 ```"),
-            #[stable(feature = "int_to_from_bytes", since = "1.32.0")]
+            #[unstable(feature = "int_to_from_bytes", issue = "52963")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn from_le_bytes(bytes: [u8; mem::size_of::<Self>()]) -> Self {
                 Self::from_le(Self::from_ne_bytes(bytes))
             }
+        }
+
+        /// no docs here
+        #[unstable(feature = "int_to_from_bytes", issue = "52963")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn from_ne_bytes(bytes: [u8; mem::size_of::<Self>()]) -> Self {
+            unsafe { mem::transmute(bytes) }
         }
 
         doc_comment! {
@@ -2057,29 +2238,19 @@ appropriate instead.
 # Examples
 
 ```
+#![feature(int_to_from_bytes)]
+
 let value = ", stringify!($SelfT), "::from_ne_bytes(if cfg!(target_endian = \"big\") {
         ", $be_bytes, "
     } else {
         ", $le_bytes, "
     });
 assert_eq!(value, ", $swap_op, ");
-```
-
-When starting from a slice rather than an array, fallible conversion APIs can be used:
-
-```
-#![feature(try_from)]
-use std::convert::TryInto;
-
-fn read_be_", stringify!($SelfT), "(input: &mut &[u8]) -> ", stringify!($SelfT), " {
-    let (int_bytes, rest) = input.split_at(std::mem::size_of::<", stringify!($SelfT), ">());
-    *input = rest;
-    ", stringify!($SelfT), "::from_be_bytes(int_bytes.try_into().unwrap())
-}
 ```"),
-            #[stable(feature = "int_to_from_bytes", since = "1.32.0")]
+            #[unstable(feature = "int_to_from_bytes", issue = "52963")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn from_ne_bytes(bytes: [u8; mem::size_of::<Self>()]) -> Self {
                 unsafe { mem::transmute(bytes) }
             }
@@ -2179,7 +2350,6 @@ Basic usage:
 ", $Feature, "assert_eq!(", stringify!($SelfT), "::min_value(), 0);", $EndFeature, "
 ```"),
             #[stable(feature = "rust1", since = "1.0.0")]
-            #[rustc_promotable]
             #[inline]
             pub const fn min_value() -> Self { 0 }
         }
@@ -2196,7 +2366,6 @@ Basic usage:
 stringify!($MaxV), ");", $EndFeature, "
 ```"),
             #[stable(feature = "rust1", since = "1.0.0")]
-            #[rustc_promotable]
             #[inline]
             pub const fn max_value() -> Self { !0 }
         }
@@ -2310,6 +2479,16 @@ assert_eq!(n.trailing_zeros(), 3);", $EndFeature, "
             }
         }
 
+        /// no docs here
+        #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn rotate_left(self, n: u32) -> Self {
+            // Protect against undefined behaviour for over-long bit shifts
+            let n = n % $BITS;
+            (self << n) | (self >> (($BITS - n) % $BITS))
+        }
+
         doc_comment! {
             concat!("Shifts the bits to the left by a specified amount, `n`,
 wrapping the truncated bits to the end of the resulting integer.
@@ -2329,9 +2508,20 @@ assert_eq!(n.rotate_left(", $rot, "), m);
             #[stable(feature = "rust1", since = "1.0.0")]
             #[rustc_const_unstable(feature = "const_int_rotate")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn rotate_left(self, n: u32) -> Self {
-                unsafe { intrinsics::rotate_left(self, n as $SelfT) }
+                (self << (n % $BITS)) | (self >> (($BITS - (n % $BITS)) % $BITS))
             }
+        }
+
+        /// no docs here
+        #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn rotate_right(self, n: u32) -> Self {
+            // Protect against undefined behaviour for over-long bit shifts
+            let n = n % $BITS;
+            (self >> n) | (self << (($BITS - n) % $BITS))
         }
 
         doc_comment! {
@@ -2354,8 +2544,9 @@ assert_eq!(n.rotate_right(", $rot, "), m);
             #[stable(feature = "rust1", since = "1.0.0")]
             #[rustc_const_unstable(feature = "const_int_rotate")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn rotate_right(self, n: u32) -> Self {
-                unsafe { intrinsics::rotate_right(self, n as $SelfT) }
+                (self >> (n % $BITS)) | (self << (($BITS - (n % $BITS)) % $BITS))
             }
         }
 
@@ -2381,6 +2572,14 @@ assert_eq!(m, ", $swapped, ");
             }
         }
 
+        /// no docs here
+        #[unstable(feature = "reverse_bits", issue = "48763")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn reverse_bits(self) -> Self {
+            unsafe { intrinsics::bitreverse(self as $ActualT) as Self }
+        }
+
         doc_comment! {
             concat!("Reverses the bit pattern of the integer.
 
@@ -2399,6 +2598,7 @@ assert_eq!(m, ", $reversed, ");
             #[unstable(feature = "reverse_bits", issue = "48763")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn reverse_bits(self) -> Self {
                 unsafe { intrinsics::bitreverse(self as $ActualT) as Self }
             }
@@ -2887,6 +3087,16 @@ $EndFeature, "
             }
         }
 
+        /// no docs here
+        #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn wrapping_add(self, rhs: Self) -> Self {
+            unsafe {
+                intrinsics::overflowing_add(self, rhs)
+            }
+        }
+
         doc_comment! {
             concat!("Wrapping (modular) addition. Computes `self + rhs`,
 wrapping around at the boundary of the type.
@@ -2903,10 +3113,21 @@ $EndFeature, "
             #[stable(feature = "rust1", since = "1.0.0")]
             #[rustc_const_unstable(feature = "const_int_wrapping")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn wrapping_add(self, rhs: Self) -> Self {
                 unsafe {
                     intrinsics::overflowing_add(self, rhs)
                 }
+            }
+        }
+
+        /// no docs here
+        #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn wrapping_sub(self, rhs: Self) -> Self {
+            unsafe {
+                intrinsics::overflowing_sub(self, rhs)
             }
         }
 
@@ -2926,10 +3147,21 @@ $EndFeature, "
             #[stable(feature = "rust1", since = "1.0.0")]
             #[rustc_const_unstable(feature = "const_int_wrapping")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn wrapping_sub(self, rhs: Self) -> Self {
                 unsafe {
                     intrinsics::overflowing_sub(self, rhs)
                 }
+            }
+        }
+
+        /// no docs here
+        #[stable(feature = "rust1", since = "1.0.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn wrapping_mul(self, rhs: Self) -> Self {
+            unsafe {
+                intrinsics::overflowing_mul(self, rhs)
             }
         }
 
@@ -2950,6 +3182,7 @@ $EndFeature, "
         #[stable(feature = "rust1", since = "1.0.0")]
         #[rustc_const_unstable(feature = "const_int_wrapping")]
         #[inline]
+        #[cfg(not(stage0))]
         pub const fn wrapping_mul(self, rhs: Self) -> Self {
             unsafe {
                 intrinsics::overflowing_mul(self, rhs)
@@ -3071,6 +3304,16 @@ assert_eq!(100", stringify!($SelfT), ".wrapping_mod_euc(10), 0);
             self.overflowing_neg().0
         }
 
+        /// no docs here
+        #[stable(feature = "num_wrapping", since = "1.2.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn wrapping_shl(self, rhs: u32) -> Self {
+            unsafe {
+                intrinsics::unchecked_shl(self, (rhs & ($BITS - 1)) as $SelfT)
+            }
+        }
+
         doc_comment! {
             concat!("Panic-free bitwise shift-left; yields `self << mask(rhs)`,
 where `mask` removes any high-order bits of `rhs` that
@@ -3094,10 +3337,21 @@ assert_eq!(1", stringify!($SelfT), ".wrapping_shl(128), 1);", $EndFeature, "
             #[stable(feature = "num_wrapping", since = "1.2.0")]
             #[rustc_const_unstable(feature = "const_int_wrapping")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn wrapping_shl(self, rhs: u32) -> Self {
                 unsafe {
                     intrinsics::unchecked_shl(self, (rhs & ($BITS - 1)) as $SelfT)
                 }
+            }
+        }
+
+        /// no docs here
+        #[stable(feature = "num_wrapping", since = "1.2.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn wrapping_shr(self, rhs: u32) -> Self {
+            unsafe {
+                intrinsics::unchecked_shr(self, (rhs & ($BITS - 1)) as $SelfT)
             }
         }
 
@@ -3124,6 +3378,7 @@ assert_eq!(128", stringify!($SelfT), ".wrapping_shr(128), 128);", $EndFeature, "
             #[stable(feature = "num_wrapping", since = "1.2.0")]
             #[rustc_const_unstable(feature = "const_int_wrapping")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn wrapping_shr(self, rhs: u32) -> Self {
                 unsafe {
                     intrinsics::unchecked_shr(self, (rhs & ($BITS - 1)) as $SelfT)
@@ -3169,6 +3424,18 @@ assert_eq!(3u8.wrapping_pow(6), 217);", $EndFeature, "
             }
         }
 
+        /// no docs here
+        #[stable(feature = "wrapping", since = "1.7.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn overflowing_add(self, rhs: Self) -> (Self, bool) {
+            let (a, b) = unsafe {
+                intrinsics::add_with_overflow(self as $ActualT,
+                                                rhs as $ActualT)
+            };
+            (a as Self, b)
+        }
+
         doc_comment! {
             concat!("Calculates `self` + `rhs`
 
@@ -3189,6 +3456,7 @@ assert_eq!(", stringify!($SelfT), "::MAX.overflowing_add(1), (0, true));", $EndF
             #[stable(feature = "wrapping", since = "1.7.0")]
             #[rustc_const_unstable(feature = "const_int_overflowing")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn overflowing_add(self, rhs: Self) -> (Self, bool) {
                 let (a, b) = unsafe {
                     intrinsics::add_with_overflow(self as $ActualT,
@@ -3196,6 +3464,18 @@ assert_eq!(", stringify!($SelfT), "::MAX.overflowing_add(1), (0, true));", $EndF
                 };
                 (a as Self, b)
             }
+        }
+
+        /// no docs here
+        #[stable(feature = "wrapping", since = "1.7.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn overflowing_sub(self, rhs: Self) -> (Self, bool) {
+            let (a, b) = unsafe {
+                intrinsics::sub_with_overflow(self as $ActualT,
+                                                rhs as $ActualT)
+            };
+            (a as Self, b)
         }
 
         doc_comment! {
@@ -3219,6 +3499,7 @@ $EndFeature, "
             #[stable(feature = "wrapping", since = "1.7.0")]
             #[rustc_const_unstable(feature = "const_int_overflowing")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn overflowing_sub(self, rhs: Self) -> (Self, bool) {
                 let (a, b) = unsafe {
                     intrinsics::sub_with_overflow(self as $ActualT,
@@ -3226,6 +3507,18 @@ $EndFeature, "
                 };
                 (a as Self, b)
             }
+        }
+
+        /// no docs here
+        #[stable(feature = "wrapping", since = "1.7.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn overflowing_mul(self, rhs: Self) -> (Self, bool) {
+            let (a, b) = unsafe {
+                intrinsics::mul_with_overflow(self as $ActualT,
+                                              rhs as $ActualT)
+            };
+            (a as Self, b)
         }
 
         /// Calculates the multiplication of `self` and `rhs`.
@@ -3248,6 +3541,7 @@ $EndFeature, "
         #[stable(feature = "wrapping", since = "1.7.0")]
         #[rustc_const_unstable(feature = "const_int_overflowing")]
         #[inline]
+        #[cfg(not(stage0))]
         pub const fn overflowing_mul(self, rhs: Self) -> (Self, bool) {
             let (a, b) = unsafe {
                 intrinsics::mul_with_overflow(self as $ActualT,
@@ -3386,6 +3680,14 @@ assert_eq!(2", stringify!($SelfT), ".overflowing_neg(), (-2i32 as ", stringify!(
             }
         }
 
+        /// no docs here
+        #[stable(feature = "wrapping", since = "1.7.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn overflowing_shl(self, rhs: u32) -> (Self, bool) {
+            (self.wrapping_shl(rhs), (rhs > ($BITS - 1)))
+        }
+
         doc_comment! {
             concat!("Shifts self left by `rhs` bits.
 
@@ -3406,9 +3708,18 @@ assert_eq!(0x1", stringify!($SelfT), ".overflowing_shl(132), (0x10, true));", $E
             #[stable(feature = "wrapping", since = "1.7.0")]
             #[rustc_const_unstable(feature = "const_int_overflowing")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn overflowing_shl(self, rhs: u32) -> (Self, bool) {
                 (self.wrapping_shl(rhs), (rhs > ($BITS - 1)))
             }
+        }
+
+        /// no docs here
+        #[stable(feature = "wrapping", since = "1.7.0")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn overflowing_shr(self, rhs: u32) -> (Self, bool) {
+            (self.wrapping_shr(rhs), (rhs > ($BITS - 1)))
         }
 
         doc_comment! {
@@ -3431,6 +3742,7 @@ assert_eq!(0x10", stringify!($SelfT), ".overflowing_shr(132), (0x1, true));", $E
             #[stable(feature = "wrapping", since = "1.7.0")]
             #[rustc_const_unstable(feature = "const_int_overflowing")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn overflowing_shr(self, rhs: u32) -> (Self, bool) {
                 (self.wrapping_shr(rhs), (rhs > ($BITS - 1)))
             }
@@ -3607,7 +3919,7 @@ assert!(!10", stringify!($SelfT), ".is_power_of_two());", $EndFeature, "
         doc_comment! {
             concat!("Returns the smallest power of two greater than or equal to `self`.
 
-When return value overflows (i.e., `self > (1 << (N-1))` for type
+When return value overflows (i.e. `self > (1 << (N-1))` for type
 `uN`), it panics in debug mode and return value is wrapped to 0 in
 release mode (the only situation in which method can return 0).
 
@@ -3643,7 +3955,6 @@ assert_eq!(3", stringify!($SelfT), ".checked_next_power_of_two(), Some(4));
 assert_eq!(", stringify!($SelfT), "::max_value().checked_next_power_of_two(), None);",
 $EndFeature, "
 ```"),
-            #[inline]
             #[stable(feature = "rust1", since = "1.0.0")]
             pub fn checked_next_power_of_two(self) -> Option<Self> {
                 self.one_less_than_next_power_of_two().checked_add(1)
@@ -3674,22 +3985,41 @@ $EndFeature, "
             }
         }
 
-        doc_comment! {
+        /// no docs here
+        #[unstable(feature = "int_to_from_bytes", issue = "52963")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn to_be_bytes(self) -> [u8; mem::size_of::<Self>()] {
+            self.to_be().to_ne_bytes()
+        }
+
+                doc_comment! {
             concat!("Return the memory representation of this integer as a byte array in
 big-endian (network) byte order.
 
 # Examples
 
 ```
+#![feature(int_to_from_bytes)]
+
 let bytes = ", $swap_op, stringify!($SelfT), ".to_be_bytes();
 assert_eq!(bytes, ", $be_bytes, ");
 ```"),
-            #[stable(feature = "int_to_from_bytes", since = "1.32.0")]
+            #[unstable(feature = "int_to_from_bytes", issue = "52963")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn to_be_bytes(self) -> [u8; mem::size_of::<Self>()] {
                 self.to_be().to_ne_bytes()
             }
+        }
+
+        /// no docs here
+        #[unstable(feature = "int_to_from_bytes", issue = "52963")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn to_le_bytes(self) -> [u8; mem::size_of::<Self>()] {
+            self.to_le().to_ne_bytes()
         }
 
         doc_comment! {
@@ -3699,15 +4029,26 @@ little-endian byte order.
 # Examples
 
 ```
+#![feature(int_to_from_bytes)]
+
 let bytes = ", $swap_op, stringify!($SelfT), ".to_le_bytes();
 assert_eq!(bytes, ", $le_bytes, ");
 ```"),
-            #[stable(feature = "int_to_from_bytes", since = "1.32.0")]
+            #[unstable(feature = "int_to_from_bytes", issue = "52963")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn to_le_bytes(self) -> [u8; mem::size_of::<Self>()] {
                 self.to_le().to_ne_bytes()
             }
+        }
+
+        /// no docs here
+        #[unstable(feature = "int_to_from_bytes", issue = "52963")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn to_ne_bytes(self) -> [u8; mem::size_of::<Self>()] {
+            unsafe { mem::transmute(self) }
         }
 
         doc_comment! {
@@ -3725,6 +4066,8 @@ instead.
 # Examples
 
 ```
+#![feature(int_to_from_bytes)]
+
 let bytes = ", $swap_op, stringify!($SelfT), ".to_ne_bytes();
 assert_eq!(bytes, if cfg!(target_endian = \"big\") {
         ", $be_bytes, "
@@ -3732,12 +4075,21 @@ assert_eq!(bytes, if cfg!(target_endian = \"big\") {
         ", $le_bytes, "
     });
 ```"),
-            #[stable(feature = "int_to_from_bytes", since = "1.32.0")]
+            #[unstable(feature = "int_to_from_bytes", issue = "52963")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn to_ne_bytes(self) -> [u8; mem::size_of::<Self>()] {
                 unsafe { mem::transmute(self) }
             }
+        }
+
+        /// no docs here
+        #[unstable(feature = "int_to_from_bytes", issue = "52963")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn from_be_bytes(bytes: [u8; mem::size_of::<Self>()]) -> Self {
+            Self::from_be(Self::from_ne_bytes(bytes))
         }
 
         doc_comment! {
@@ -3747,28 +4099,26 @@ big endian.
 # Examples
 
 ```
+#![feature(int_to_from_bytes)]
+
 let value = ", stringify!($SelfT), "::from_be_bytes(", $be_bytes, ");
 assert_eq!(value, ", $swap_op, ");
-```
-
-When starting from a slice rather than an array, fallible conversion APIs can be used:
-
-```
-#![feature(try_from)]
-use std::convert::TryInto;
-
-fn read_be_", stringify!($SelfT), "(input: &mut &[u8]) -> ", stringify!($SelfT), " {
-    let (int_bytes, rest) = input.split_at(std::mem::size_of::<", stringify!($SelfT), ">());
-    *input = rest;
-    ", stringify!($SelfT), "::from_be_bytes(int_bytes.try_into().unwrap())
-}
 ```"),
-            #[stable(feature = "int_to_from_bytes", since = "1.32.0")]
+            #[unstable(feature = "int_to_from_bytes", issue = "52963")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn from_be_bytes(bytes: [u8; mem::size_of::<Self>()]) -> Self {
                 Self::from_be(Self::from_ne_bytes(bytes))
             }
+        }
+
+        /// no docs here
+        #[unstable(feature = "int_to_from_bytes", issue = "52963")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn from_le_bytes(bytes: [u8; mem::size_of::<Self>()]) -> Self {
+            Self::from_le(Self::from_ne_bytes(bytes))
         }
 
         doc_comment! {
@@ -3779,28 +4129,26 @@ little endian.
 # Examples
 
 ```
+#![feature(int_to_from_bytes)]
+
 let value = ", stringify!($SelfT), "::from_le_bytes(", $le_bytes, ");
 assert_eq!(value, ", $swap_op, ");
-```
-
-When starting from a slice rather than an array, fallible conversion APIs can be used:
-
-```
-#![feature(try_from)]
-use std::convert::TryInto;
-
-fn read_be_", stringify!($SelfT), "(input: &mut &[u8]) -> ", stringify!($SelfT), " {
-    let (int_bytes, rest) = input.split_at(std::mem::size_of::<", stringify!($SelfT), ">());
-    *input = rest;
-    ", stringify!($SelfT), "::from_be_bytes(int_bytes.try_into().unwrap())
-}
 ```"),
-            #[stable(feature = "int_to_from_bytes", since = "1.32.0")]
+            #[unstable(feature = "int_to_from_bytes", issue = "52963")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn from_le_bytes(bytes: [u8; mem::size_of::<Self>()]) -> Self {
                 Self::from_le(Self::from_ne_bytes(bytes))
             }
+        }
+
+        /// no docs here
+        #[unstable(feature = "int_to_from_bytes", issue = "52963")]
+        #[inline]
+        #[cfg(stage0)]
+        pub fn from_ne_bytes(bytes: [u8; mem::size_of::<Self>()]) -> Self {
+            unsafe { mem::transmute(bytes) }
         }
 
         doc_comment! {
@@ -3817,29 +4165,19 @@ appropriate instead.
 # Examples
 
 ```
+#![feature(int_to_from_bytes)]
+
 let value = ", stringify!($SelfT), "::from_ne_bytes(if cfg!(target_endian = \"big\") {
         ", $be_bytes, "
     } else {
         ", $le_bytes, "
     });
 assert_eq!(value, ", $swap_op, ");
-```
-
-When starting from a slice rather than an array, fallible conversion APIs can be used:
-
-```
-#![feature(try_from)]
-use std::convert::TryInto;
-
-fn read_be_", stringify!($SelfT), "(input: &mut &[u8]) -> ", stringify!($SelfT), " {
-    let (int_bytes, rest) = input.split_at(std::mem::size_of::<", stringify!($SelfT), ">());
-    *input = rest;
-    ", stringify!($SelfT), "::from_be_bytes(int_bytes.try_into().unwrap())
-}
 ```"),
-            #[stable(feature = "int_to_from_bytes", since = "1.32.0")]
+            #[unstable(feature = "int_to_from_bytes", issue = "52963")]
             #[rustc_const_unstable(feature = "const_int_conversion")]
             #[inline]
+            #[cfg(not(stage0))]
             pub const fn from_ne_bytes(bytes: [u8; mem::size_of::<Self>()]) -> Self {
                 unsafe { mem::transmute(bytes) }
             }
@@ -4817,7 +5155,7 @@ fn from_str_radix<T: FromStrRadixHelper>(src: &str, radix: u32) -> Result<T, Par
 /// # Potential causes
 ///
 /// Among other causes, `ParseIntError` can be thrown because of leading or trailing whitespace
-/// in the string e.g., when it is obtained from the standard input.
+/// in the string e.g. when it is obtained from the standard input.
 /// Using the [`str.trim()`] method ensures that no whitespace remains before parsing.
 ///
 /// [`str.trim()`]: ../../std/primitive.str.html#method.trim
@@ -4828,38 +5166,15 @@ pub struct ParseIntError {
     kind: IntErrorKind,
 }
 
-/// Enum to store the various types of errors that can cause parsing an integer to fail.
-#[unstable(feature = "int_error_matching",
-           reason = "it can be useful to match errors when making error messages \
-                     for integer parsing",
-           issue = "22639")]
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum IntErrorKind {
-    /// Value being parsed is empty.
-    ///
-    /// Among other causes, this variant will be constructed when parsing an empty string.
+enum IntErrorKind {
     Empty,
-    /// Contains an invalid digit.
-    ///
-    /// Among other causes, this variant will be constructed when parsing a string that
-    /// contains a letter.
     InvalidDigit,
-    /// Integer is too large to store in target integer type.
     Overflow,
-    /// Integer is too small to store in target integer type.
     Underflow,
 }
 
 impl ParseIntError {
-    /// Outputs the detailed cause of parsing an integer failing.
-    #[unstable(feature = "int_error_matching",
-               reason = "it can be useful to match errors when making error messages \
-                         for integer parsing",
-               issue = "22639")]
-    pub fn kind(&self) -> &IntErrorKind {
-        &self.kind
-    }
     #[unstable(feature = "int_error_internals",
                reason = "available through Error trait and this method should \
                          not be exposed publicly",

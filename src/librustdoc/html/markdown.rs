@@ -399,6 +399,7 @@ impl<'a, I: Iterator<Item = Event<'a>>> SummaryLine<'a, I> {
 fn check_if_allowed_tag(t: &Tag) -> bool {
     match *t {
         Tag::Paragraph
+        | Tag::CodeBlock(_)
         | Tag::Item
         | Tag::Emphasis
         | Tag::Strong
@@ -419,36 +420,29 @@ impl<'a, I: Iterator<Item = Event<'a>>> Iterator for SummaryLine<'a, I> {
         if !self.started {
             self.started = true;
         }
-        while let Some(event) = self.inner.next() {
-            let mut is_start = true;
-            let is_allowed_tag = match event {
-                Event::Start(Tag::CodeBlock(_)) | Event::End(Tag::CodeBlock(_)) => {
-                    return None;
-                }
-                Event::Start(ref c) => {
-                    self.depth += 1;
-                    check_if_allowed_tag(c)
-                }
-                Event::End(ref c) => {
-                    self.depth -= 1;
-                    is_start = false;
-                    check_if_allowed_tag(c)
-                }
-                _ => {
-                    true
-                }
-            };
-            return if is_allowed_tag == false {
-                if is_start {
-                    Some(Event::Start(Tag::Paragraph))
-                } else {
-                    Some(Event::End(Tag::Paragraph))
-                }
+        let event = self.inner.next();
+        let mut is_start = true;
+        let is_allowed_tag = match event {
+            Some(Event::Start(ref c)) => {
+                self.depth += 1;
+                check_if_allowed_tag(c)
+            }
+            Some(Event::End(ref c)) => {
+                self.depth -= 1;
+                is_start = false;
+                check_if_allowed_tag(c)
+            }
+            _ => true,
+        };
+        if is_allowed_tag == false {
+            if is_start {
+                Some(Event::Start(Tag::Paragraph))
             } else {
-                Some(event)
-            };
+                Some(Event::End(Tag::Paragraph))
+            }
+        } else {
+            event
         }
-        None
     }
 }
 
@@ -538,10 +532,8 @@ impl fmt::Display for TestableCodeError {
     }
 }
 
-pub fn find_testable_code<T: test::Tester>(
-    doc: &str,
-    tests: &mut T,
-    error_codes: ErrorCodes,
+pub fn find_testable_code(
+    doc: &str, tests: &mut test::Collector, error_codes: ErrorCodes,
 ) -> Result<(), TestableCodeError> {
     let mut parser = Parser::new(doc);
     let mut prev_offset = 0;
@@ -806,10 +798,6 @@ impl<'a> fmt::Display for MarkdownSummaryLine<'a> {
 }
 
 pub fn plain_summary_line(md: &str) -> String {
-    plain_summary_line_full(md, false)
-}
-
-pub fn plain_summary_line_full(md: &str, limit_length: bool) -> String {
     struct ParserWrapper<'a> {
         inner: Parser<'a>,
         is_in: isize,
@@ -856,21 +844,7 @@ pub fn plain_summary_line_full(md: &str, limit_length: bool) -> String {
             s.push_str(&t);
         }
     }
-    if limit_length && s.chars().count() > 60 {
-        let mut len = 0;
-        let mut ret = s.split_whitespace()
-                       .take_while(|p| {
-                           // + 1 for the added character after the word.
-                           len += p.chars().count() + 1;
-                           len < 60
-                       })
-                       .collect::<Vec<_>>()
-                       .join(" ");
-        ret.push('…');
-        ret
-    } else {
-        s
-    }
+    s
 }
 
 pub fn markdown_links(md: &str) -> Vec<(String, Option<Range<usize>>)> {
@@ -929,7 +903,7 @@ pub fn markdown_links(md: &str) -> Vec<(String, Option<Range<usize>>)> {
     links
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Default)]
 pub struct IdMap {
     map: FxHashMap<String, usize>,
 }

@@ -20,7 +20,7 @@
        html_playground_url = "https://play.rust-lang.org/",
        test(attr(deny(warnings))))]
 
-#![feature(nll)]
+#![cfg_attr(not(stage0), feature(nll))]
 
 pub use self::Piece::*;
 pub use self::Position::*;
@@ -288,7 +288,7 @@ impl<'a> Parser<'a> {
                 self.cur.next();
                 Some(pos)
             } else {
-                let pos = pos + raw + 1;
+                let pos = pos + padding + 1;
                 self.err(format!("expected `{:?}`, found `{:?}`", c, maybe),
                          format!("expected `{}`", c),
                          pos,

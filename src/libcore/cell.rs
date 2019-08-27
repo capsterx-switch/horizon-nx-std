@@ -97,7 +97,7 @@
 //! ## Implementation details of logically-immutable methods
 //!
 //! Occasionally it may be desirable not to expose in an API that there is mutation happening
-//! "under the hood". This may be because logically the operation is immutable, but e.g., caching
+//! "under the hood". This may be because logically the operation is immutable, but e.g. caching
 //! forces the implementation to perform mutation; or because you must employ mutation to implement
 //! a trait method that was originally defined to take `&self`.
 //!
@@ -207,8 +207,8 @@ use ptr;
 ///
 /// # Examples
 ///
-/// In this example, you can see that `Cell<T>` enables mutation inside an
-/// immutable struct. In other words, it enables "interior mutability".
+/// Here you can see how using `Cell<T>` allows to use mutable field inside
+/// immutable struct (which is also called 'interior mutability').
 ///
 /// ```
 /// use std::cell::Cell;
@@ -225,11 +225,10 @@ use ptr;
 ///
 /// let new_value = 100;
 ///
-/// // ERROR: `my_struct` is immutable
+/// // ERROR, because my_struct is immutable
 /// // my_struct.regular_field = new_value;
 ///
-/// // WORKS: although `my_struct` is immutable, `special_field` is a `Cell`,
-/// // which can always be mutated
+/// // WORKS, although `my_struct` is immutable, field `special_field` is mutable because it is Cell
 /// my_struct.special_field.set(new_value);
 /// assert_eq!(my_struct.special_field.get(), new_value);
 /// ```
@@ -474,7 +473,7 @@ impl<T: ?Sized> Cell<T> {
     /// ```
     #[inline]
     #[stable(feature = "cell_as_ptr", since = "1.12.0")]
-    pub const fn as_ptr(&self) -> *mut T {
+    pub fn as_ptr(&self) -> *mut T {
         self.value.get()
     }
 
@@ -1093,7 +1092,7 @@ impl<'b> BorrowRef<'b> {
     }
 }
 
-impl Drop for BorrowRef<'_> {
+impl<'b> Drop for BorrowRef<'b> {
     #[inline]
     fn drop(&mut self) {
         let borrow = self.borrow.get();
@@ -1102,9 +1101,9 @@ impl Drop for BorrowRef<'_> {
     }
 }
 
-impl Clone for BorrowRef<'_> {
+impl<'b> Clone for BorrowRef<'b> {
     #[inline]
-    fn clone(&self) -> Self {
+    fn clone(&self) -> BorrowRef<'b> {
         // Since this Ref exists, we know the borrow flag
         // is a reading borrow.
         let borrow = self.borrow.get();
@@ -1128,7 +1127,7 @@ pub struct Ref<'b, T: ?Sized + 'b> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized> Deref for Ref<'_, T> {
+impl<'b, T: ?Sized> Deref for Ref<'b, T> {
     type Target = T;
 
     #[inline]
@@ -1220,14 +1219,14 @@ impl<'b, T: ?Sized> Ref<'b, T> {
 impl<'b, T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<Ref<'b, U>> for Ref<'b, T> {}
 
 #[stable(feature = "std_guard_impls", since = "1.20.0")]
-impl<T: ?Sized + fmt::Display> fmt::Display for Ref<'_, T> {
+impl<'a, T: ?Sized + fmt::Display> fmt::Display for Ref<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.value.fmt(f)
     }
 }
 
 impl<'b, T: ?Sized> RefMut<'b, T> {
-    /// Make a new `RefMut` for a component of the borrowed data, e.g., an enum
+    /// Make a new `RefMut` for a component of the borrowed data, e.g. an enum
     /// variant.
     ///
     /// The `RefCell` is already mutably borrowed, so this cannot fail.
@@ -1306,7 +1305,7 @@ struct BorrowRefMut<'b> {
     borrow: &'b Cell<BorrowFlag>,
 }
 
-impl Drop for BorrowRefMut<'_> {
+impl<'b> Drop for BorrowRefMut<'b> {
     #[inline]
     fn drop(&mut self) {
         let borrow = self.borrow.get();
@@ -1357,7 +1356,7 @@ pub struct RefMut<'b, T: ?Sized + 'b> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized> Deref for RefMut<'_, T> {
+impl<'b, T: ?Sized> Deref for RefMut<'b, T> {
     type Target = T;
 
     #[inline]
@@ -1367,7 +1366,7 @@ impl<T: ?Sized> Deref for RefMut<'_, T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<T: ?Sized> DerefMut for RefMut<'_, T> {
+impl<'b, T: ?Sized> DerefMut for RefMut<'b, T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
         self.value
@@ -1378,7 +1377,7 @@ impl<T: ?Sized> DerefMut for RefMut<'_, T> {
 impl<'b, T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<RefMut<'b, U>> for RefMut<'b, T> {}
 
 #[stable(feature = "std_guard_impls", since = "1.20.0")]
-impl<T: ?Sized + fmt::Display> fmt::Display for RefMut<'_, T> {
+impl<'a, T: ?Sized + fmt::Display> fmt::Display for RefMut<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.value.fmt(f)
     }
@@ -1508,10 +1507,8 @@ impl<T: ?Sized> UnsafeCell<T> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub const fn get(&self) -> *mut T {
-        // We can just cast the pointer from `UnsafeCell<T>` to `T` because of
-        // #[repr(transparent)]
-        self as *const UnsafeCell<T> as *const T as *mut T
+    pub fn get(&self) -> *mut T {
+        &self.value as *const T as *mut T
     }
 }
 

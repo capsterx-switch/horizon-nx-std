@@ -121,7 +121,7 @@ impl<'tcx> CodegenUnit<'tcx> {
     pub fn new(name: InternedString) -> CodegenUnit<'tcx> {
         CodegenUnit {
             name: name,
-            items: Default::default(),
+            items: FxHashMap(),
             size_estimate: None,
         }
     }
@@ -251,7 +251,7 @@ impl<'a, 'gcx: 'tcx, 'tcx: 'a> CodegenUnitNameBuilder<'a, 'gcx, 'tcx> {
     pub fn new(tcx: TyCtxt<'a, 'gcx, 'tcx>) -> Self {
         CodegenUnitNameBuilder {
             tcx,
-            cache: Default::default(),
+            cache: FxHashMap(),
         }
     }
 
@@ -272,7 +272,7 @@ impl<'a, 'gcx: 'tcx, 'tcx: 'a> CodegenUnitNameBuilder<'a, 'gcx, 'tcx> {
     ///
     /// The '.' before `<special-suffix>` makes sure that names with a special
     /// suffix can never collide with a name built out of regular Rust
-    /// identifiers (e.g., module paths).
+    /// identifiers (e.g. module paths).
     pub fn build_cgu_name<I, C, S>(&mut self,
                                    cnum: CrateNum,
                                    components: I,
@@ -325,7 +325,7 @@ impl<'a, 'gcx: 'tcx, 'tcx: 'a> CodegenUnitNameBuilder<'a, 'gcx, 'tcx> {
                 String::new()
             };
 
-            let crate_disambiguator = tcx.crate_disambiguator(cnum).to_string();
+            let crate_disambiguator = format!("{}", tcx.crate_disambiguator(cnum));
             // Using a shortened disambiguator of about 40 bits
             format!("{}.{}{}",
                 tcx.crate_name(cnum),

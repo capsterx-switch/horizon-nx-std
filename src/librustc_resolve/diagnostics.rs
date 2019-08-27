@@ -295,8 +295,9 @@ that has been imported into the current module.
 Erroneous code example:
 
 ```compile_fail,E0259
+# #![feature(libc)]
 extern crate core;
-extern crate std as core;
+extern crate libc as core;
 
 fn main() {}
 ```
@@ -307,8 +308,9 @@ external crate imported into the current module.
 Correct example:
 
 ```
+# #![feature(libc)]
 extern crate core;
-extern crate std as other_name;
+extern crate libc as other_name;
 
 fn main() {}
 ```
@@ -1251,7 +1253,7 @@ Erroneous code example:
 
 ```compile_fail,E0433
 let map = HashMap::new();
-// error: failed to resolve: use of undeclared type or module `HashMap`
+// error: failed to resolve. Use of undeclared type or module `HashMap`
 ```
 
 Please verify you didn't misspell the type/module's name or that you didn't

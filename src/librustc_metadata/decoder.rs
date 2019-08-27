@@ -400,7 +400,7 @@ impl<'a, 'tcx> MetadataBlob {
         for (i, dep) in root.crate_deps
                             .decode(self)
                             .enumerate() {
-            write!(out, "{} {}{}\n", i + 1, dep.name, dep.extra_filename)?;
+            write!(out, "{} {}-{}\n", i + 1, dep.name, dep.hash)?;
         }
         write!(out, "\n")?;
         Ok(())
@@ -601,7 +601,7 @@ impl<'a, 'tcx> CrateMetadata {
                 })
                 .collect()
         } else {
-            std::iter::once(self.get_variant(tcx, &item, item_id, kind)).collect()
+            vec![self.get_variant(tcx, &item, item_id, kind)]
         };
 
         tcx.alloc_adt_def(did, kind, variants, repr)
@@ -1106,15 +1106,15 @@ impl<'a, 'tcx> CrateMetadata {
         }
     }
 
-    pub fn get_macro(&self, id: DefIndex) -> MacroDef {
+    pub fn get_macro(&self, id: DefIndex) -> (InternedString, MacroDef) {
         let entry = self.entry(id);
         match entry.kind {
-            EntryKind::MacroDef(macro_def) => macro_def.decode(self),
+            EntryKind::MacroDef(macro_def) => (self.item_name(id), macro_def.decode(self)),
             _ => bug!(),
         }
     }
 
-    crate fn is_const_fn_raw(&self, id: DefIndex) -> bool {
+    pub fn is_const_fn(&self, id: DefIndex) -> bool {
         let constness = match self.entry(id).kind {
             EntryKind::Method(data) => data.decode(self).fn_data.constness,
             EntryKind::Fn(data) => data.decode(self).constness,

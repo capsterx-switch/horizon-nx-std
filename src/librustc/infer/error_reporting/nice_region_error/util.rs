@@ -50,7 +50,7 @@ impl<'a, 'gcx, 'tcx> NiceRegionError<'a, 'gcx, 'tcx> {
         &self,
         anon_region: Region<'tcx>,
         replace_region: Region<'tcx>,
-    ) -> Option<AnonymousArgInfo<'_>> {
+    ) -> Option<AnonymousArgInfo> {
         let (id, bound_region) = match *anon_region {
             ty::ReFree(ref free_region) => (free_region.scope, free_region.bound_region),
             ty::ReEarlyBound(ref ebr) => (
@@ -60,7 +60,7 @@ impl<'a, 'gcx, 'tcx> NiceRegionError<'a, 'gcx, 'tcx> {
             _ => return None, // not a free region
         };
 
-        let hir = &self.tcx.hir();
+        let hir = &self.tcx.hir;
         if let Some(node_id) = hir.as_local_node_id(id) {
             if let Some(body_id) = hir.maybe_body_owned_by(node_id) {
                 let body = hir.body(body_id);
@@ -119,13 +119,16 @@ impl<'a, 'gcx, 'tcx> NiceRegionError<'a, 'gcx, 'tcx> {
         decl: &hir::FnDecl,
     ) -> Option<Span> {
         let ret_ty = self.tcx.type_of(scope_def_id);
-        if let ty::FnDef(_, _) = ret_ty.sty {
-            let sig = ret_ty.fn_sig(self.tcx);
-            let late_bound_regions = self.tcx
-                .collect_referenced_late_bound_regions(&sig.output());
-            if late_bound_regions.iter().any(|r| *r == br) {
-                return Some(decl.output.span());
+        match ret_ty.sty {
+            ty::FnDef(_, _) => {
+                let sig = ret_ty.fn_sig(self.tcx);
+                let late_bound_regions = self.tcx
+                    .collect_referenced_late_bound_regions(&sig.output());
+                if late_bound_regions.iter().any(|r| *r == br) {
+                    return Some(decl.output.span());
+                }
             }
+            _ => {}
         }
         None
     }
@@ -137,8 +140,8 @@ impl<'a, 'gcx, 'tcx> NiceRegionError<'a, 'gcx, 'tcx> {
     pub(super) fn is_self_anon(&self, is_first: bool, scope_def_id: DefId) -> bool {
         is_first
             && self.tcx
-                   .opt_associated_item(scope_def_id)
-                   .map(|i| i.method_has_self_argument) == Some(true)
+                .opt_associated_item(scope_def_id)
+                .map(|i| i.method_has_self_argument) == Some(true)
     }
 
 }

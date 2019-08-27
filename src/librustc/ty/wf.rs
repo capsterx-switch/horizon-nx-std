@@ -158,7 +158,7 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
         let infcx = &mut self.infcx;
         let param_env = self.param_env;
         self.out.iter()
-                .inspect(|pred| assert!(!pred.has_escaping_bound_vars()))
+                .inspect(|pred| assert!(!pred.has_escaping_regions()))
                 .flat_map(|pred| {
                     let mut selcx = traits::SelectionContext::new(infcx);
                     let pred = traits::normalize(&mut selcx, param_env, cause.clone(), pred);
@@ -190,7 +190,7 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
 
         self.out.extend(
             trait_ref.substs.types()
-                            .filter(|ty| !ty.has_escaping_bound_vars())
+                            .filter(|ty| !ty.has_escaping_regions())
                             .map(|ty| traits::Obligation::new(cause.clone(),
                                                               param_env,
                                                               ty::Predicate::WellFormed(ty))));
@@ -205,7 +205,7 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
         let trait_ref = data.trait_ref(self.infcx.tcx);
         self.compute_trait_ref(&trait_ref, Elaborate::None);
 
-        if !data.has_escaping_bound_vars() {
+        if !data.has_escaping_regions() {
             let predicate = trait_ref.to_predicate();
             let cause = self.cause(traits::ProjectionWf(data));
             self.out.push(traits::Obligation::new(cause, self.param_env, predicate));
@@ -223,13 +223,13 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
             let predicate = ty::Predicate::ConstEvaluatable(def_id, substs);
             let cause = self.cause(traits::MiscObligation);
             self.out.push(traits::Obligation::new(cause,
-                                                  self.param_env,
-                                                  predicate));
+                                                    self.param_env,
+                                                    predicate));
         }
     }
 
     fn require_sized(&mut self, subty: Ty<'tcx>, cause: traits::ObligationCauseCode<'tcx>) {
-        if !subty.has_escaping_bound_vars() {
+        if !subty.has_escaping_regions() {
             let cause = self.cause(cause);
             let trait_ref = ty::TraitRef {
                 def_id: self.infcx.tcx.require_lang_item(lang_items::SizedTraitLangItem),
@@ -258,8 +258,6 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
                 ty::GeneratorWitness(..) |
                 ty::Never |
                 ty::Param(_) |
-                ty::Bound(..) |
-                ty::Placeholder(..) |
                 ty::Foreign(..) => {
                     // WfScalar, WfParameter, etc
                 }
@@ -291,8 +289,6 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
                     self.compute_projection(data);
                 }
 
-                ty::UnnormalizedProjection(..) => bug!("only used with chalk-engine"),
-
                 ty::Adt(def, substs) => {
                     // WfNominalType
                     let obligations = self.nominal_obligations(def.did, substs);
@@ -301,7 +297,7 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
 
                 ty::Ref(r, rty, _) => {
                     // WfReference
-                    if !r.has_escaping_bound_vars() && !rty.has_escaping_bound_vars() {
+                    if !r.has_escaping_regions() && !rty.has_escaping_regions() {
                         let cause = self.cause(traits::ReferenceOutlivesReferent(ty));
                         self.out.push(
                             traits::Obligation::new(
@@ -389,7 +385,7 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
 
                     let cause = self.cause(traits::MiscObligation);
                     let component_traits =
-                        data.auto_traits().chain(once(data.principal().def_id()));
+                        data.auto_traits().chain(data.principal().map(|p| p.def_id()));
                     self.out.extend(
                         component_traits.map(|did| traits::Obligation::new(
                             cause.clone(),
@@ -452,7 +448,7 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
                   .map(|pred| traits::Obligation::new(cause.clone(),
                                                       self.param_env,
                                                       pred))
-                  .filter(|pred| !pred.has_escaping_bound_vars())
+                  .filter(|pred| !pred.has_escaping_regions())
                   .collect()
     }
 
@@ -491,13 +487,12 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
         // Note: in fact we only permit builtin traits, not `Bar<'d>`, I
         // am looking forward to the future here.
 
-        if !data.has_escaping_bound_vars() {
+        if !data.has_escaping_regions() {
             let implicit_bounds =
                 object_region_bounds(self.infcx.tcx, data);
 
             let explicit_bound = region;
 
-            self.out.reserve(implicit_bounds.len());
             for implicit_bound in implicit_bounds {
                 let cause = self.cause(traits::ObjectTypeBound(ty, explicit_bound));
                 let outlives = ty::Binder::dummy(
@@ -523,7 +518,7 @@ pub fn object_region_bounds<'a, 'gcx, 'tcx>(
 {
     // Since we don't actually *know* the self type for an object,
     // this "open(err)" serves as a kind of dummy standin -- basically
-    // a placeholder type.
+    // a skolemized type.
     let open_ty = tcx.mk_infer(ty::FreshTy(0));
 
     let predicates = existential_predicates.iter().filter_map(|predicate| {

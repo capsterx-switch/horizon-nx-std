@@ -11,7 +11,7 @@
 //! See docs in build/expr/mod.rs
 
 use build::expr::category::{Category, RvalueFunc};
-use build::{BlockAnd, BlockAndExtension, BlockFrame, Builder};
+use build::{BlockAnd, BlockAndExtension, Builder};
 use hair::*;
 use rustc::mir::*;
 use rustc::ty;
@@ -39,17 +39,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         let expr_span = expr.span;
         let source_info = this.source_info(expr_span);
 
-        let expr_is_block_or_scope = match expr.kind {
-            ExprKind::Block { .. } => true,
-            ExprKind::Scope { .. } => true,
-            _ => false,
-        };
-
-        if !expr_is_block_or_scope {
-            this.block_context.push(BlockFrame::SubExpr);
-        }
-
-        let block_and = match expr.kind {
+        match expr.kind {
             ExprKind::Scope {
                 region_scope,
                 lint_level,
@@ -274,7 +264,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                 );
                 exit_block.unit()
             }
-            ExprKind::Call { ty, fun, args, from_hir_call } => {
+            ExprKind::Call { ty, fun, args } => {
                 // FIXME(canndrew): This is_never should probably be an is_uninhabited
                 let diverges = expr.ty.is_never();
                 let intrinsic = match ty.sty {
@@ -306,13 +296,12 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                     let ptr_temp = this.local_decls.push(LocalDecl {
                         mutability: Mutability::Mut,
                         ty: ptr_ty,
-                        user_ty: UserTypeProjections::none(),
+                        user_ty: None,
                         name: None,
                         source_info,
                         visibility_scope: source_info.scope,
                         internal: true,
                         is_user_variable: None,
-                        is_block_tail: None,
                     });
                     let ptr_temp = Place::Local(ptr_temp);
                     let block = unpack!(this.into(&ptr_temp, block, ptr));
@@ -337,7 +326,6 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                             } else {
                                 Some((destination.clone(), success))
                             },
-                            from_hir_call,
                         },
                     );
                     success.unit()
@@ -351,17 +339,13 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             | ExprKind::Break { .. }
             | ExprKind::InlineAsm { .. }
             | ExprKind::Return { .. } => {
-                unpack!(block = this.stmt_expr(block, expr, None));
+                unpack!(block = this.stmt_expr(block, expr));
                 this.cfg.push_assign_unit(block, source_info, destination);
                 block.unit()
             }
 
             // Avoid creating a temporary
-            ExprKind::VarRef { .. } |
-            ExprKind::SelfRef |
-            ExprKind::StaticRef { .. } |
-            ExprKind::PlaceTypeAscription { .. } |
-            ExprKind::ValueTypeAscription { .. } => {
+            ExprKind::VarRef { .. } | ExprKind::SelfRef | ExprKind::StaticRef { .. } => {
                 debug_assert!(Category::of(&expr.kind) == Some(Category::Place));
 
                 let place = unpack!(block = this.as_place(block, expr));
@@ -409,14 +393,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             | ExprKind::Literal { .. }
             | ExprKind::Yield { .. } => {
                 debug_assert!(match Category::of(&expr.kind).unwrap() {
-                    // should be handled above
                     Category::Rvalue(RvalueFunc::Into) => false,
-
-                    // must be handled above or else we get an
-                    // infinite loop in the builder; see
-                    // e.g., `ExprKind::VarRef` above
-                    Category::Place => false,
-
                     _ => true,
                 });
 
@@ -425,13 +402,6 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                     .push_assign(block, source_info, destination, rvalue);
                 block.unit()
             }
-        };
-
-        if !expr_is_block_or_scope {
-            let popped = this.block_context.pop();
-            assert!(popped.is_some());
         }
-
-        block_and
     }
 }

@@ -29,13 +29,11 @@
 //! ```
 //!
 //! This means that users of this analysis still have to check whether
-//! pre-existing references can be used to access the value (e.g., at movable
+//! pre-existing references can be used to access the value (e.g. at movable
 //! generator yield points, all pre-existing references are invalidated, so this
 //! doesn't matter).
 
-use rustc::mir::visit::{
-    PlaceContext, Visitor, MutatingUseContext, NonMutatingUseContext, NonUseContext,
-};
+use rustc::mir::visit::{PlaceContext, Visitor};
 use rustc::mir::Local;
 use rustc::mir::*;
 use rustc::ty::{item_path, TyCtxt};
@@ -163,10 +161,10 @@ pub fn categorize<'tcx>(context: PlaceContext<'tcx>) -> Option<DefUse> {
         ///////////////////////////////////////////////////////////////////////////
         // DEFS
 
-        PlaceContext::MutatingUse(MutatingUseContext::Store) |
+        PlaceContext::Store |
 
         // This is potentially both a def and a use...
-        PlaceContext::MutatingUse(MutatingUseContext::AsmOutput) |
+        PlaceContext::AsmOutput |
 
         // We let Call define the result in both the success and
         // unwind cases. This is not really correct, however it
@@ -174,12 +172,12 @@ pub fn categorize<'tcx>(context: PlaceContext<'tcx>) -> Option<DefUse> {
         // generate MIR. To do things properly, we would apply
         // the def in call only to the input from the success
         // path and not the unwind path. -nmatsakis
-        PlaceContext::MutatingUse(MutatingUseContext::Call) |
+        PlaceContext::Call |
 
         // Storage live and storage dead aren't proper defines, but we can ignore
         // values that come before them.
-        PlaceContext::NonUse(NonUseContext::StorageLive) |
-        PlaceContext::NonUse(NonUseContext::StorageDead) => Some(DefUse::Def),
+        PlaceContext::StorageLive |
+        PlaceContext::StorageDead => Some(DefUse::Def),
 
         ///////////////////////////////////////////////////////////////////////////
         // REGULAR USES
@@ -188,23 +186,18 @@ pub fn categorize<'tcx>(context: PlaceContext<'tcx>) -> Option<DefUse> {
         // purposes of NLL, these are special in that **all** the
         // lifetimes appearing in the variable must be live for each regular use.
 
-        PlaceContext::NonMutatingUse(NonMutatingUseContext::Projection) |
-        PlaceContext::MutatingUse(MutatingUseContext::Projection) |
+        PlaceContext::Projection(..) |
 
         // Borrows only consider their local used at the point of the borrow.
         // This won't affect the results since we use this analysis for generators
         // and we only care about the result at suspension points. Borrows cannot
         // cross suspension points so this behavior is unproblematic.
-        PlaceContext::MutatingUse(MutatingUseContext::Borrow(..)) |
-        PlaceContext::NonMutatingUse(NonMutatingUseContext::SharedBorrow(..)) |
-        PlaceContext::NonMutatingUse(NonMutatingUseContext::ShallowBorrow(..)) |
-        PlaceContext::NonMutatingUse(NonMutatingUseContext::UniqueBorrow(..)) |
+        PlaceContext::Borrow { .. } |
 
-        PlaceContext::NonMutatingUse(NonMutatingUseContext::Inspect) |
-        PlaceContext::NonMutatingUse(NonMutatingUseContext::Copy) |
-        PlaceContext::NonMutatingUse(NonMutatingUseContext::Move) |
-        PlaceContext::NonUse(NonUseContext::AscribeUserTy) |
-        PlaceContext::MutatingUse(MutatingUseContext::Retag) =>
+        PlaceContext::Inspect |
+        PlaceContext::Copy |
+        PlaceContext::Move |
+        PlaceContext::Validate =>
             Some(DefUse::Use),
 
         ///////////////////////////////////////////////////////////////////////////
@@ -215,7 +208,7 @@ pub fn categorize<'tcx>(context: PlaceContext<'tcx>) -> Option<DefUse> {
         // uses in drop are special because `#[may_dangle]`
         // attributes can affect whether lifetimes must be live.
 
-        PlaceContext::MutatingUse(MutatingUseContext::Drop) =>
+        PlaceContext::Drop =>
             Some(DefUse::Drop),
     }
 }
@@ -343,7 +336,7 @@ fn dump_matched_mir_node<'a, 'tcx, V: Idx>(
 ) {
     let mut file_path = PathBuf::new();
     file_path.push(Path::new(&tcx.sess.opts.debugging_opts.dump_mir_dir));
-    let item_id = tcx.hir().as_local_node_id(source.def_id).unwrap();
+    let item_id = tcx.hir.as_local_node_id(source.def_id).unwrap();
     let file_name = format!("rustc.node{}{}-liveness.mir", item_id, pass_name);
     file_path.push(&file_name);
     let _ = fs::File::create(&file_path).and_then(|mut file| {

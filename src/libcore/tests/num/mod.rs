@@ -82,28 +82,36 @@ fn from_str_issue7588() {
 
 #[test]
 fn test_int_from_str_overflow() {
-    assert_eq!("127".parse::<i8>().ok(), Some(127i8));
+    let mut i8_val: i8 = 127;
+    assert_eq!("127".parse::<i8>().ok(), Some(i8_val));
     assert_eq!("128".parse::<i8>().ok(), None);
 
-    assert_eq!("-128".parse::<i8>().ok(), Some(-128i8));
+    i8_val = i8_val.wrapping_add(1);
+    assert_eq!("-128".parse::<i8>().ok(), Some(i8_val));
     assert_eq!("-129".parse::<i8>().ok(), None);
 
-    assert_eq!("32767".parse::<i16>().ok(), Some(32_767i16));
+    let mut i16_val: i16 = 32_767;
+    assert_eq!("32767".parse::<i16>().ok(), Some(i16_val));
     assert_eq!("32768".parse::<i16>().ok(), None);
 
-    assert_eq!("-32768".parse::<i16>().ok(), Some(-32_768i16));
+    i16_val = i16_val.wrapping_add(1);
+    assert_eq!("-32768".parse::<i16>().ok(), Some(i16_val));
     assert_eq!("-32769".parse::<i16>().ok(), None);
 
-    assert_eq!("2147483647".parse::<i32>().ok(), Some(2_147_483_647i32));
+    let mut i32_val: i32 = 2_147_483_647;
+    assert_eq!("2147483647".parse::<i32>().ok(), Some(i32_val));
     assert_eq!("2147483648".parse::<i32>().ok(), None);
 
-    assert_eq!("-2147483648".parse::<i32>().ok(), Some(-2_147_483_648i32));
+    i32_val = i32_val.wrapping_add(1);
+    assert_eq!("-2147483648".parse::<i32>().ok(), Some(i32_val));
     assert_eq!("-2147483649".parse::<i32>().ok(), None);
 
-    assert_eq!("9223372036854775807".parse::<i64>().ok(), Some(9_223_372_036_854_775_807i64));
+    let mut i64_val: i64 = 9_223_372_036_854_775_807;
+    assert_eq!("9223372036854775807".parse::<i64>().ok(), Some(i64_val));
     assert_eq!("9223372036854775808".parse::<i64>().ok(), None);
 
-    assert_eq!("-9223372036854775808".parse::<i64>().ok(), Some(-9_223_372_036_854_775_808i64));
+    i64_val = i64_val.wrapping_add(1);
+    assert_eq!("-9223372036854775808".parse::<i64>().ok(), Some(i64_val));
     assert_eq!("-9223372036854775809".parse::<i64>().ok(), None);
 }
 

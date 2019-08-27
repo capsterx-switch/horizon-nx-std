@@ -54,12 +54,14 @@ pub struct TypeSizeInfo {
     pub variants: Vec<VariantInfo>,
 }
 
-#[derive(PartialEq, Eq, Debug, Default)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct CodeStats {
     type_sizes: FxHashSet<TypeSizeInfo>,
 }
 
 impl CodeStats {
+    pub fn new() -> Self { CodeStats { type_sizes: FxHashSet() } }
+
     pub fn record_type_size<S: ToString>(&mut self,
                                          kind: DataTypeKind,
                                          type_desc: S,
@@ -71,7 +73,7 @@ impl CodeStats {
         let info = TypeSizeInfo {
             kind,
             type_description: type_desc.to_string(),
-            align: align.bytes(),
+            align: align.abi(),
             overall_size: overall_size.bytes(),
             packed: packed,
             opt_discr_size: opt_discr_size.map(|s| s.bytes()),

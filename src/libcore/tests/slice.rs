@@ -339,228 +339,6 @@ fn test_chunks_exact_mut_zip() {
 }
 
 #[test]
-fn test_rchunks_count() {
-    let v: &[i32] = &[0, 1, 2, 3, 4, 5];
-    let c = v.rchunks(3);
-    assert_eq!(c.count(), 2);
-
-    let v2: &[i32] = &[0, 1, 2, 3, 4];
-    let c2 = v2.rchunks(2);
-    assert_eq!(c2.count(), 3);
-
-    let v3: &[i32] = &[];
-    let c3 = v3.rchunks(2);
-    assert_eq!(c3.count(), 0);
-}
-
-#[test]
-fn test_rchunks_nth() {
-    let v: &[i32] = &[0, 1, 2, 3, 4, 5];
-    let mut c = v.rchunks(2);
-    assert_eq!(c.nth(1).unwrap(), &[2, 3]);
-    assert_eq!(c.next().unwrap(), &[0, 1]);
-
-    let v2: &[i32] = &[0, 1, 2, 3, 4];
-    let mut c2 = v2.rchunks(3);
-    assert_eq!(c2.nth(1).unwrap(), &[0, 1]);
-    assert_eq!(c2.next(), None);
-}
-
-#[test]
-fn test_rchunks_last() {
-    let v: &[i32] = &[0, 1, 2, 3, 4, 5];
-    let c = v.rchunks(2);
-    assert_eq!(c.last().unwrap()[1], 1);
-
-    let v2: &[i32] = &[0, 1, 2, 3, 4];
-    let c2 = v2.rchunks(2);
-    assert_eq!(c2.last().unwrap()[0], 0);
-}
-
-#[test]
-fn test_rchunks_zip() {
-    let v1: &[i32] = &[0, 1, 2, 3, 4];
-    let v2: &[i32] = &[6, 7, 8, 9, 10];
-
-    let res = v1.rchunks(2)
-        .zip(v2.rchunks(2))
-        .map(|(a, b)| a.iter().sum::<i32>() + b.iter().sum::<i32>())
-        .collect::<Vec<_>>();
-    assert_eq!(res, vec![26, 18, 6]);
-}
-
-#[test]
-fn test_rchunks_mut_count() {
-    let v: &mut [i32] = &mut [0, 1, 2, 3, 4, 5];
-    let c = v.rchunks_mut(3);
-    assert_eq!(c.count(), 2);
-
-    let v2: &mut [i32] = &mut [0, 1, 2, 3, 4];
-    let c2 = v2.rchunks_mut(2);
-    assert_eq!(c2.count(), 3);
-
-    let v3: &mut [i32] = &mut [];
-    let c3 = v3.rchunks_mut(2);
-    assert_eq!(c3.count(), 0);
-}
-
-#[test]
-fn test_rchunks_mut_nth() {
-    let v: &mut [i32] = &mut [0, 1, 2, 3, 4, 5];
-    let mut c = v.rchunks_mut(2);
-    assert_eq!(c.nth(1).unwrap(), &[2, 3]);
-    assert_eq!(c.next().unwrap(), &[0, 1]);
-
-    let v2: &mut [i32] = &mut [0, 1, 2, 3, 4];
-    let mut c2 = v2.rchunks_mut(3);
-    assert_eq!(c2.nth(1).unwrap(), &[0, 1]);
-    assert_eq!(c2.next(), None);
-}
-
-#[test]
-fn test_rchunks_mut_last() {
-    let v: &mut [i32] = &mut [0, 1, 2, 3, 4, 5];
-    let c = v.rchunks_mut(2);
-    assert_eq!(c.last().unwrap(), &[0, 1]);
-
-    let v2: &mut [i32] = &mut [0, 1, 2, 3, 4];
-    let c2 = v2.rchunks_mut(2);
-    assert_eq!(c2.last().unwrap(), &[0]);
-}
-
-#[test]
-fn test_rchunks_mut_zip() {
-    let v1: &mut [i32] = &mut [0, 1, 2, 3, 4];
-    let v2: &[i32] = &[6, 7, 8, 9, 10];
-
-    for (a, b) in v1.rchunks_mut(2).zip(v2.rchunks(2)) {
-        let sum = b.iter().sum::<i32>();
-        for v in a {
-            *v += sum;
-        }
-    }
-    assert_eq!(v1, [6, 16, 17, 22, 23]);
-}
-
-#[test]
-fn test_rchunks_exact_count() {
-    let v: &[i32] = &[0, 1, 2, 3, 4, 5];
-    let c = v.rchunks_exact(3);
-    assert_eq!(c.count(), 2);
-
-    let v2: &[i32] = &[0, 1, 2, 3, 4];
-    let c2 = v2.rchunks_exact(2);
-    assert_eq!(c2.count(), 2);
-
-    let v3: &[i32] = &[];
-    let c3 = v3.rchunks_exact(2);
-    assert_eq!(c3.count(), 0);
-}
-
-#[test]
-fn test_rchunks_exact_nth() {
-    let v: &[i32] = &[0, 1, 2, 3, 4, 5];
-    let mut c = v.rchunks_exact(2);
-    assert_eq!(c.nth(1).unwrap(), &[2, 3]);
-    assert_eq!(c.next().unwrap(), &[0, 1]);
-
-    let v2: &[i32] = &[0, 1, 2, 3, 4, 5, 6];
-    let mut c2 = v2.rchunks_exact(3);
-    assert_eq!(c2.nth(1).unwrap(), &[1, 2, 3]);
-    assert_eq!(c2.next(), None);
-}
-
-#[test]
-fn test_rchunks_exact_last() {
-    let v: &[i32] = &[0, 1, 2, 3, 4, 5];
-    let c = v.rchunks_exact(2);
-    assert_eq!(c.last().unwrap(), &[0, 1]);
-
-    let v2: &[i32] = &[0, 1, 2, 3, 4];
-    let c2 = v2.rchunks_exact(2);
-    assert_eq!(c2.last().unwrap(), &[1, 2]);
-}
-
-#[test]
-fn test_rchunks_exact_remainder() {
-    let v: &[i32] = &[0, 1, 2, 3, 4];
-    let c = v.rchunks_exact(2);
-    assert_eq!(c.remainder(), &[0]);
-}
-
-#[test]
-fn test_rchunks_exact_zip() {
-    let v1: &[i32] = &[0, 1, 2, 3, 4];
-    let v2: &[i32] = &[6, 7, 8, 9, 10];
-
-    let res = v1.rchunks_exact(2)
-        .zip(v2.rchunks_exact(2))
-        .map(|(a, b)| a.iter().sum::<i32>() + b.iter().sum::<i32>())
-        .collect::<Vec<_>>();
-    assert_eq!(res, vec![26, 18]);
-}
-
-#[test]
-fn test_rchunks_exact_mut_count() {
-    let v: &mut [i32] = &mut [0, 1, 2, 3, 4, 5];
-    let c = v.rchunks_exact_mut(3);
-    assert_eq!(c.count(), 2);
-
-    let v2: &mut [i32] = &mut [0, 1, 2, 3, 4];
-    let c2 = v2.rchunks_exact_mut(2);
-    assert_eq!(c2.count(), 2);
-
-    let v3: &mut [i32] = &mut [];
-    let c3 = v3.rchunks_exact_mut(2);
-    assert_eq!(c3.count(), 0);
-}
-
-#[test]
-fn test_rchunks_exact_mut_nth() {
-    let v: &mut [i32] = &mut [0, 1, 2, 3, 4, 5];
-    let mut c = v.rchunks_exact_mut(2);
-    assert_eq!(c.nth(1).unwrap(), &[2, 3]);
-    assert_eq!(c.next().unwrap(), &[0, 1]);
-
-    let v2: &mut [i32] = &mut [0, 1, 2, 3, 4, 5, 6];
-    let mut c2 = v2.rchunks_exact_mut(3);
-    assert_eq!(c2.nth(1).unwrap(), &[1, 2, 3]);
-    assert_eq!(c2.next(), None);
-}
-
-#[test]
-fn test_rchunks_exact_mut_last() {
-    let v: &mut [i32] = &mut [0, 1, 2, 3, 4, 5];
-    let c = v.rchunks_exact_mut(2);
-    assert_eq!(c.last().unwrap(), &[0, 1]);
-
-    let v2: &mut [i32] = &mut [0, 1, 2, 3, 4];
-    let c2 = v2.rchunks_exact_mut(2);
-    assert_eq!(c2.last().unwrap(), &[1, 2]);
-}
-
-#[test]
-fn test_rchunks_exact_mut_remainder() {
-    let v: &mut [i32] = &mut [0, 1, 2, 3, 4];
-    let c = v.rchunks_exact_mut(2);
-    assert_eq!(c.into_remainder(), &[0]);
-}
-
-#[test]
-fn test_rchunks_exact_mut_zip() {
-    let v1: &mut [i32] = &mut [0, 1, 2, 3, 4];
-    let v2: &[i32] = &[6, 7, 8, 9, 10];
-
-    for (a, b) in v1.rchunks_exact_mut(2).zip(v2.rchunks_exact(2)) {
-        let sum = b.iter().sum::<i32>();
-        for v in a {
-            *v += sum;
-        }
-    }
-    assert_eq!(v1, [0, 16, 17, 22, 23]);
-}
-
-#[test]
 fn test_windows_count() {
     let v: &[i32] = &[0, 1, 2, 3, 4, 5];
     let c = v.windows(3);
@@ -1024,11 +802,11 @@ fn test_rotate_right() {
 fn sort_unstable() {
     use core::cmp::Ordering::{Equal, Greater, Less};
     use core::slice::heapsort;
-    use rand::{FromEntropy, Rng, rngs::SmallRng, seq::SliceRandom};
+    use rand::{FromEntropy, Rng, XorShiftRng};
 
     let mut v = [0; 600];
     let mut tmp = [0; 600];
-    let mut rng = SmallRng::from_entropy();
+    let mut rng = XorShiftRng::from_entropy();
 
     for len in (2..25).chain(500..510) {
         let v = &mut v[0..len];
@@ -1073,7 +851,7 @@ fn sort_unstable() {
     for i in 0..v.len() {
         v[i] = i as i32;
     }
-    v.sort_unstable_by(|_, _| *[Less, Equal, Greater].choose(&mut rng).unwrap());
+    v.sort_unstable_by(|_, _| *rng.choose(&[Less, Equal, Greater]).unwrap());
     v.sort_unstable();
     for i in 0..v.len() {
         assert_eq!(v[i], i as i32);

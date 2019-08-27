@@ -36,12 +36,12 @@ impl<'tcx> RegionInferenceContext<'tcx> {
                 let outlived_by = self.universal_region_relations.regions_outlived_by(region);
                 writeln!(
                     out,
-                    "| {r:rw$?} | {c:cw$?} | {ob:?}",
-                    r = region,
+                    "| {r:rw$} | {c:cw$} | {ob}",
+                    r = format!("{:?}", region),
                     rw = REGION_WIDTH,
-                    c = classification,
+                    c = format!("{:?}", classification),
                     cw = 8, // "External" at most
-                    ob = outlived_by
+                    ob = format!("{:?}", outlived_by)
                 )?;
             }
         }
@@ -51,8 +51,8 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         for region in self.regions() {
             writeln!(
                 out,
-                "| {r:rw$?} | {ui:4?} | {v}",
-                r = region,
+                "| {r:rw$} | {ui:4?} | {v}",
+                r = format!("{:?}", region),
                 rw = REGION_WIDTH,
                 ui = self.region_universe(region),
                 v = self.region_value_str(region),

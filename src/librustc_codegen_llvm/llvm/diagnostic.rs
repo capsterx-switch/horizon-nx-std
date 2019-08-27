@@ -77,7 +77,7 @@ impl OptimizationDiagnostic<'ll> {
             ).ok()
         ).ok();
 
-        let mut filename = filename.unwrap_or_default();
+        let mut filename = filename.unwrap_or(String::new());
         if filename.is_empty() {
             filename.push_str("<unknown file>");
         }

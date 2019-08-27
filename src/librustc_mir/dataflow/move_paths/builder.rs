@@ -11,13 +11,14 @@
 use rustc::ty::{self, TyCtxt};
 use rustc::mir::*;
 use rustc::mir::tcx::RvalueInitializationState;
+use rustc::util::nodemap::FxHashMap;
 use rustc_data_structures::indexed_vec::{IndexVec};
-use smallvec::{SmallVec, smallvec};
 
 use std::collections::hash_map::Entry;
 use std::mem;
 
 use super::abs_domain::Lift;
+
 use super::{LocationMap, MoveData, MovePath, MovePathLookup, MovePathIndex, MoveOut, MoveOutIndex};
 use super::{MoveError, InitIndex, Init, InitLocation, LookupResult, InitKind};
 use super::IllegalMoveOriginKind::*;
@@ -52,7 +53,7 @@ impl<'a, 'gcx, 'tcx> MoveDataBuilder<'a, 'gcx, 'tcx> {
                             v,
                         )
                     }).collect(),
-                    projections: Default::default(),
+                    projections: FxHashMap(),
                 },
                 move_paths,
                 path_map,
@@ -64,8 +65,8 @@ impl<'a, 'gcx, 'tcx> MoveDataBuilder<'a, 'gcx, 'tcx> {
     }
 
     fn new_move_path(move_paths: &mut IndexVec<MovePathIndex, MovePath<'tcx>>,
-                     path_map: &mut IndexVec<MovePathIndex, SmallVec<[MoveOutIndex; 4]>>,
-                     init_path_map: &mut IndexVec<MovePathIndex, SmallVec<[InitIndex; 4]>>,
+                     path_map: &mut IndexVec<MovePathIndex, Vec<MoveOutIndex>>,
+                     init_path_map: &mut IndexVec<MovePathIndex, Vec<InitIndex>>,
                      parent: Option<MovePathIndex>,
                      place: Place<'tcx>)
                      -> MovePathIndex
@@ -83,10 +84,10 @@ impl<'a, 'gcx, 'tcx> MoveDataBuilder<'a, 'gcx, 'tcx> {
             move_paths[move_path].next_sibling = next_sibling;
         }
 
-        let path_map_ent = path_map.push(smallvec![]);
+        let path_map_ent = path_map.push(vec![]);
         assert_eq!(path_map_ent, move_path);
 
-        let init_path_map_ent = init_path_map.push(smallvec![]);
+        let init_path_map_ent = init_path_map.push(vec![]);
         assert_eq!(init_path_map_ent, move_path);
 
         move_path
@@ -128,7 +129,7 @@ impl<'b, 'a, 'gcx, 'tcx> Gatherer<'b, 'a, 'gcx, 'tcx> {
                                 proj: &PlaceProjection<'tcx>)
                                 -> Result<MovePathIndex, MoveError<'tcx>>
     {
-        let base = self.move_path_for(&proj.base)?;
+        let base = try!(self.move_path_for(&proj.base));
         let mir = self.builder.mir;
         let tcx = self.builder.tcx;
         let place_ty = proj.base.ty(mir, tcx).to_ty(tcx);
@@ -289,7 +290,7 @@ impl<'b, 'a, 'gcx, 'tcx> Gatherer<'b, 'a, 'gcx, 'tcx> {
                         self.gather_init(output, InitKind::Deep);
                     }
                 }
-                for (_, input) in inputs.iter() {
+                for input in inputs {
                     self.gather_operand(input);
                 }
             }
@@ -301,8 +302,8 @@ impl<'b, 'a, 'gcx, 'tcx> Gatherer<'b, 'a, 'gcx, 'tcx> {
                 span_bug!(stmt.source_info.span,
                           "SetDiscriminant should not exist during borrowck");
             }
-            StatementKind::Retag { .. } |
-            StatementKind::EscapeToRaw { .. } |
+            StatementKind::EndRegion(_) |
+            StatementKind::Validate(..) |
             StatementKind::AscribeUserType(..) |
             StatementKind::Nop => {}
         }
@@ -379,13 +380,7 @@ impl<'b, 'a, 'gcx, 'tcx> Gatherer<'b, 'a, 'gcx, 'tcx> {
                 self.gather_operand(value);
                 self.gather_init(location, InitKind::Deep);
             }
-            TerminatorKind::Call {
-                ref func,
-                ref args,
-                ref destination,
-                cleanup: _,
-                from_hir_call: _,
-            } => {
+            TerminatorKind::Call { ref func, ref args, ref destination, cleanup: _ } => {
                 self.gather_operand(func);
                 for arg in args {
                     self.gather_operand(arg);
@@ -429,20 +424,6 @@ impl<'b, 'a, 'gcx, 'tcx> Gatherer<'b, 'a, 'gcx, 'tcx> {
 
     fn gather_init(&mut self, place: &Place<'tcx>, kind: InitKind) {
         debug!("gather_init({:?}, {:?})", self.loc, place);
-
-        let place = match place {
-            // Check if we are assigning into a field of a union, if so, lookup the place
-            // of the union so it is marked as initialized again.
-            Place::Projection(box Projection {
-                base,
-                elem: ProjectionElem::Field(_, _),
-            }) if match base.ty(self.builder.mir, self.builder.tcx).to_ty(self.builder.tcx).sty {
-                    ty::TyKind::Adt(def, _) if def.is_union() => true,
-                    _ => false,
-            } => base,
-            // Otherwise, lookup the place.
-            _ => place,
-        };
 
         if let LookupResult::Exact(path) = self.builder.data.rev_lookup.find(place) {
             let init = self.builder.data.inits.push(Init {

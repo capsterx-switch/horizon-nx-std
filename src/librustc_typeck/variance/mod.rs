@@ -11,7 +11,7 @@
 //! Module for inferring the variance of type and lifetime parameters. See the [rustc guide]
 //! chapter for more info.
 //!
-//! [rustc guide]: https://rust-lang.github.io/rustc-guide/variance.html
+//! [rustc guide]: https://rust-lang-nursery.github.io/rustc-guide/variance.html
 
 use arena;
 use rustc::hir;
@@ -48,20 +48,20 @@ pub fn provide(providers: &mut Providers) {
 fn crate_variances<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, crate_num: CrateNum)
                              -> Lrc<CrateVariancesMap> {
     assert_eq!(crate_num, LOCAL_CRATE);
-    let mut arena = arena::TypedArena::default();
+    let mut arena = arena::TypedArena::new();
     let terms_cx = terms::determine_parameters_to_be_inferred(tcx, &mut arena);
     let constraints_cx = constraints::add_constraints_from_crate(terms_cx);
     Lrc::new(solve::solve_constraints(constraints_cx))
 }
 
 fn variances_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, item_def_id: DefId)
-                          -> Lrc<Vec<ty::Variance>> {
-    let id = tcx.hir().as_local_node_id(item_def_id).expect("expected local def-id");
+                            -> Lrc<Vec<ty::Variance>> {
+    let id = tcx.hir.as_local_node_id(item_def_id).expect("expected local def-id");
     let unsupported = || {
         // Variance not relevant.
-        span_bug!(tcx.hir().span(id), "asked to compute variance for wrong kind of item")
+        span_bug!(tcx.hir.span(id), "asked to compute variance for wrong kind of item")
     };
-    match tcx.hir().get(id) {
+    match tcx.hir.get(id) {
         Node::Item(item) => match item.node {
             hir::ItemKind::Enum(..) |
             hir::ItemKind::Struct(..) |

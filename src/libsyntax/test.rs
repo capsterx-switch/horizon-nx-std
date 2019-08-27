@@ -237,7 +237,6 @@ fn mk_reexport_mod(cx: &mut TestCtxt,
     })).collect();
 
     let reexport_mod = ast::Mod {
-        inline: true,
         inner: DUMMY_SP,
         items,
     };
@@ -281,7 +280,7 @@ fn generate_test_harness(sess: &ParseSess,
         path: Vec::new(),
         test_cases: Vec::new(),
         reexport_test_harness_main,
-        // N.B., doesn't consider the value of `--crate-name` passed on the command line.
+        // NB: doesn't consider the value of `--crate-name` passed on the command line.
         is_libtest: attr::find_crate_name(&krate.attrs).map(|s| s == "test").unwrap_or(false),
         toplevel_reexport: None,
         ctxt: SyntaxContext::empty().apply_mark(mark),
@@ -346,7 +345,7 @@ fn mk_main(cx: &mut TestCtxt) -> P<ast::Item> {
 
     test_runner.span = sp;
 
-    let test_main_path_expr = ecx.expr_path(test_runner);
+    let test_main_path_expr = ecx.expr_path(test_runner.clone());
     let call_test_main = ecx.expr_call(sp, test_main_path_expr,
                                        vec![mk_tests_slice(cx)]);
     let call_test_main = ecx.stmt_expr(call_test_main);

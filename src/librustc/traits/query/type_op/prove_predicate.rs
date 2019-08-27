@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use infer::canonical::{Canonical, Canonicalized, CanonicalizedQueryResponse, QueryResponse};
+use infer::canonical::{Canonical, Canonicalized, CanonicalizedQueryResult, QueryResult};
 use traits::query::Fallible;
 use ty::{ParamEnvAnd, Predicate, TyCtxt};
 
@@ -24,12 +24,12 @@ impl<'tcx> ProvePredicate<'tcx> {
 }
 
 impl<'gcx: 'tcx, 'tcx> super::QueryTypeOp<'gcx, 'tcx> for ProvePredicate<'tcx> {
-    type QueryResponse = ();
+    type QueryResult = ();
 
     fn try_fast_path(
         tcx: TyCtxt<'_, 'gcx, 'tcx>,
         key: &ParamEnvAnd<'tcx, Self>,
-    ) -> Option<Self::QueryResponse> {
+    ) -> Option<Self::QueryResult> {
         // Proving Sized, very often on "obviously sized" types like
         // `&T`, accounts for about 60% percentage of the predicates
         // we have to prove. No need to canonicalize and all that for
@@ -50,13 +50,13 @@ impl<'gcx: 'tcx, 'tcx> super::QueryTypeOp<'gcx, 'tcx> for ProvePredicate<'tcx> {
     fn perform_query(
         tcx: TyCtxt<'_, 'gcx, 'tcx>,
         canonicalized: Canonicalized<'gcx, ParamEnvAnd<'tcx, Self>>,
-    ) -> Fallible<CanonicalizedQueryResponse<'gcx, ()>> {
+    ) -> Fallible<CanonicalizedQueryResult<'gcx, ()>> {
         tcx.type_op_prove_predicate(canonicalized)
     }
 
     fn shrink_to_tcx_lifetime(
-        v: &'a CanonicalizedQueryResponse<'gcx, ()>,
-    ) -> &'a Canonical<'tcx, QueryResponse<'tcx, ()>> {
+        v: &'a CanonicalizedQueryResult<'gcx, ()>,
+    ) -> &'a Canonical<'tcx, QueryResult<'tcx, ()>> {
         v
     }
 }

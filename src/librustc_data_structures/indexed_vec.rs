@@ -98,16 +98,10 @@ macro_rules! newtype_index {
      @max          [$max:expr]
      @vis          [$v:vis]
      @debug_format [$debug_format:tt]) => (
-        #[derive(Copy, PartialEq, Eq, Hash, PartialOrd, Ord, $($derives),*)]
+        #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, $($derives),*)]
         #[rustc_layout_scalar_valid_range_end($max)]
         $v struct $type {
             private: u32
-        }
-
-        impl Clone for $type {
-            fn clone(&self) -> Self {
-                *self
-            }
         }
 
         impl $type {
@@ -151,7 +145,7 @@ macro_rules! newtype_index {
 
             #[inline]
             $v const unsafe fn from_u32_unchecked(value: u32) -> Self {
-                unsafe { $type { private: value } }
+                $type { private: value }
             }
 
             /// Extract value of this index as an integer.
@@ -334,13 +328,12 @@ macro_rules! newtype_index {
                    derive [$($derives:ident,)+]
                    $($tokens:tt)*) => (
         newtype_index!(
-            @derives      [$($derives,)+ RustcEncodable,]
+            @derives      [$($derives,)+ RustcDecodable, RustcEncodable,]
             @type         [$type]
             @max          [$max]
             @vis          [$v]
             @debug_format [$debug_format]
                           $($tokens)*);
-        newtype_index!(@decodable $type);
     );
 
     // The case where no derives are added, but encodable is overridden. Don't
@@ -367,29 +360,12 @@ macro_rules! newtype_index {
      @debug_format [$debug_format:tt]
                    $($tokens:tt)*) => (
         newtype_index!(
-            @derives      [RustcEncodable,]
+            @derives      [RustcDecodable, RustcEncodable,]
             @type         [$type]
             @max          [$max]
             @vis          [$v]
             @debug_format [$debug_format]
                           $($tokens)*);
-        newtype_index!(@decodable $type);
-    );
-
-    (@decodable $type:ident) => (
-        impl $type {
-            fn __decodable__impl__hack() {
-                mod __more_hacks_because__self_doesnt_work_in_functions {
-                    extern crate serialize;
-                    use self::serialize::{Decodable, Decoder};
-                    impl Decodable for super::$type {
-                        fn decode<D: Decoder>(d: &mut D) -> Result<Self, D::Error> {
-                            d.read_u32().map(Self::from)
-                        }
-                    }
-                }
-            }
-        }
     );
 
     // Rewrite final without comma to one that includes comma
@@ -557,13 +533,6 @@ impl<I: Idx, T> IndexVec<I, T> {
     #[inline]
     pub fn len(&self) -> usize {
         self.raw.len()
-    }
-
-    /// Gives the next index that will be assigned when `push` is
-    /// called.
-    #[inline]
-    pub fn next_index(&self) -> I {
-        I::new(self.len())
     }
 
     #[inline]

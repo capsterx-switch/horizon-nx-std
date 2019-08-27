@@ -47,7 +47,7 @@ trait Foo where Self: Sized {
 We cannot create an object of type `Box<Foo>` or `&Foo` since in this case
 `Self` would not be `Sized`.
 
-Generally, `Self: Sized` is used to indicate that the trait should not be used
+Generally, `Self : Sized` is used to indicate that the trait should not be used
 as a trait object. If the trait comes from your own crate, consider removing
 this restriction.
 
@@ -217,9 +217,9 @@ trait Trait {
 ```
 
 If this is not an option, consider replacing the type parameter with another
-trait object (e.g., if `T: OtherTrait`, use `on: Box<OtherTrait>`). If the
-number of types you intend to feed to this method is limited, consider manually
-listing out the methods of different types.
+trait object (e.g. if `T: OtherTrait`, use `on: Box<OtherTrait>`). If the number
+of types you intend to feed to this method is limited, consider manually listing
+out the methods of different types.
 
 ### Method has no receiver
 
@@ -637,12 +637,12 @@ Erroneous code example:
 ```compile_fail,E0152
 #![feature(lang_items)]
 
-#[lang = "arc"]
-struct Foo; // error: duplicate lang item found: `arc`
+#[lang = "panic_impl"]
+struct Foo; // error: duplicate lang item found: `panic_impl`
 ```
 
 Lang items are already implemented in the standard library. Unless you are
-writing a free-standing application (e.g., a kernel), you do not need to provide
+writing a free-standing application (e.g. a kernel), you do not need to provide
 them yourself.
 
 You can build a free-standing crate by adding `#![no_std]` to the crate
@@ -699,7 +699,7 @@ This error appears when the curly braces contain an identifier which doesn't
 match with any of the type parameters or the string `Self`. This might happen
 if you misspelled a type parameter, or if you intended to use literal curly
 braces. If it is the latter, escape the curly braces with a second curly brace
-of the same type; e.g., a literal `{` is `{{`.
+of the same type; e.g. a literal `{` is `{{`.
 "##,
 
 E0231: r##"
@@ -832,7 +832,7 @@ extern "C" {
 
 E0271: r##"
 This is because of a type mismatch between the associated type of some
-trait (e.g., `T::Bar`, where `T` implements `trait Quux { type Bar; }`)
+trait (e.g. `T::Bar`, where `T` implements `trait Quux { type Bar; }`)
 and another type `U` that is required to be equal to `T::Bar`, but is not.
 Examples follow.
 
@@ -1622,7 +1622,7 @@ representation of enums isn't strictly defined in Rust, and this attribute
 won't work on enums.
 
 `#[repr(simd)]` will give a struct consisting of a homogeneous series of machine
-types (i.e., `u8`, `i32`, etc) a representation that permits vectorization via
+types (i.e. `u8`, `i32`, etc) a representation that permits vectorization via
 SIMD. This doesn't make much sense for enums since they don't consist of a
 single list of data.
 "##,
@@ -2116,25 +2116,11 @@ struct Foo;
 ```
 "##,
 
-E0718: r##"
-This error indicates that a `#[lang = ".."]` attribute was placed
-on the wrong type of item.
-
-Examples of erroneous code:
-
-```compile_fail,E0718
-#![feature(lang_items)]
-
-#[lang = "arc"]
-static X: u32 = 42;
-```
-"##,
-
 }
 
 
 register_diagnostics! {
-//  E0006, // merged with E0005
+//  E0006 // merged with E0005
 //  E0101, // replaced with E0282
 //  E0102, // replaced with E0282
 //  E0134,
@@ -2183,7 +2169,9 @@ register_diagnostics! {
     E0657, // `impl Trait` can only capture lifetimes bound at the fn level
     E0687, // in-band lifetimes cannot be used in `fn`/`Fn` syntax
     E0688, // in-band lifetimes cannot be mixed with explicit lifetime binders
+
     E0697, // closures cannot be static
+
     E0707, // multiple elided lifetimes used in arguments of `async fn`
     E0708, // `async` non-`move` closures with arguments are not currently supported
     E0709, // multiple different lifetimes used in arguments of `async fn`

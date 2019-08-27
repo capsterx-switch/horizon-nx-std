@@ -76,9 +76,9 @@ pub enum StringPart {
 }
 
 impl StringPart {
-    pub fn content(&self) -> &str {
+    pub fn content(&self) -> String {
         match self {
-            &StringPart::Normal(ref s) | & StringPart::Highlighted(ref s) => s
+            &StringPart::Normal(ref s) | & StringPart::Highlighted(ref s) => s.to_owned()
         }
     }
 }
@@ -136,17 +136,6 @@ impl Diagnostic {
     /// called the primary span.
     pub fn span_label<T: Into<String>>(&mut self, span: Span, label: T) -> &mut Self {
         self.span.push_span_label(span, label.into());
-        self
-    }
-
-    pub fn replace_span_with(&mut self, after: Span) -> &mut Self {
-        let before = self.span.clone();
-        self.set_span(after);
-        for span_label in before.span_labels() {
-            if let Some(label) = span_label.label {
-                self.span_label(after, label);
-            }
-        }
         self
     }
 
@@ -361,10 +350,10 @@ impl Diagnostic {
     }
 
     pub fn span_suggestions_with_applicability(&mut self, sp: Span, msg: &str,
-        suggestions: impl Iterator<Item = String>, applicability: Applicability) -> &mut Self
-    {
+                                        suggestions: Vec<String>,
+                                        applicability: Applicability) -> &mut Self {
         self.suggestions.push(CodeSuggestion {
-            substitutions: suggestions.map(|snippet| Substitution {
+            substitutions: suggestions.into_iter().map(|snippet| Substitution {
                 parts: vec![SubstitutionPart {
                     snippet,
                     span: sp,
@@ -409,7 +398,7 @@ impl Diagnostic {
     }
 
     pub fn message(&self) -> String {
-        self.message.iter().map(|i| i.0.as_str()).collect::<String>()
+        self.message.iter().map(|i| i.0.to_owned()).collect::<String>()
     }
 
     pub fn styled_message(&self) -> &Vec<(String, Style)> {
@@ -459,7 +448,7 @@ impl Diagnostic {
 
 impl SubDiagnostic {
     pub fn message(&self) -> String {
-        self.message.iter().map(|i| i.0.as_str()).collect::<String>()
+        self.message.iter().map(|i| i.0.to_owned()).collect::<String>()
     }
 
     pub fn styled_message(&self) -> &Vec<(String, Style)> {

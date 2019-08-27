@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Implementation of [the WTF-8 encoding](https://simonsapin.github.io/wtf-8/).
 //!
 //! This library uses Rust’s type system to maintain
@@ -67,7 +57,7 @@ impl CodePoint {
     /// Only use when `value` is known to be less than or equal to 0x10FFFF.
     #[inline]
     pub unsafe fn from_u32_unchecked(value: u32) -> CodePoint {
-        CodePoint { value }
+        CodePoint { value: value }
     }
 
     /// Creates a new `CodePoint` if the value is a valid code point.
@@ -76,7 +66,7 @@ impl CodePoint {
     #[inline]
     pub fn from_u32(value: u32) -> Option<CodePoint> {
         match value {
-            0 ..= 0x10FFFF => Some(CodePoint { value }),
+            0 ..= 0x10FFFF => Some(CodePoint { value: value }),
             _ => None
         }
     }

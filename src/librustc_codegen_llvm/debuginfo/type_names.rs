@@ -14,14 +14,13 @@ use common::CodegenCx;
 use rustc::hir::def_id::DefId;
 use rustc::ty::subst::Substs;
 use rustc::ty::{self, Ty};
-use rustc_codegen_ssa::traits::*;
 
 use rustc::hir;
 
 // Compute the name of the type as it should be stored in debuginfo. Does not do
-// any caching, i.e., calling the function twice with the same type will also do
+// any caching, i.e. calling the function twice with the same type will also do
 // the work twice. The `qualified` parameter only affects the first level of the
-// type name, further levels (i.e., type parameters) are always fully qualified.
+// type name, further levels (i.e. type parameters) are always fully qualified.
 pub fn compute_debuginfo_type_name<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
                                              t: Ty<'tcx>,
                                              qualified: bool)
@@ -117,12 +116,14 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
             }
         },
         ty::Dynamic(ref trait_data, ..) => {
-            let principal = cx.tcx.normalize_erasing_late_bound_regions(
-                ty::ParamEnv::reveal_all(),
-                &trait_data.principal(),
-            );
-            push_item_name(cx, principal.def_id, false, output);
-            push_type_params(cx, principal.substs, output);
+            if let Some(principal) = trait_data.principal() {
+                let principal = cx.tcx.normalize_erasing_late_bound_regions(
+                    ty::ParamEnv::reveal_all(),
+                    &principal,
+                );
+                push_item_name(cx, principal.def_id, false, output);
+                push_type_params(cx, principal.substs, output);
+            }
         },
         ty::FnDef(..) | ty::FnPtr(_) => {
             let sig = t.fn_sig(cx.tcx);
@@ -172,15 +173,12 @@ pub fn push_debuginfo_type_name<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
         }
         ty::Error |
         ty::Infer(_) |
-        ty::Placeholder(..) |
-        ty::UnnormalizedProjection(..) |
         ty::Projection(..) |
-        ty::Bound(..) |
         ty::Opaque(..) |
         ty::GeneratorWitness(..) |
         ty::Param(_) => {
             bug!("debuginfo: Trying to create type name for \
-                  unexpected type: {:?}", t);
+                unexpected type: {:?}", t);
         }
     }
 

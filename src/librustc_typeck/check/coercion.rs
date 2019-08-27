@@ -61,7 +61,7 @@
 //! we may want to adjust precisely when coercions occur.
 
 use check::{FnCtxt, Needs};
-use errors::DiagnosticBuilder;
+
 use rustc::hir;
 use rustc::hir::def_id::DefId;
 use rustc::infer::{Coercion, InferResult, InferOk};
@@ -72,11 +72,13 @@ use rustc::ty::{self, TypeAndMut, Ty, ClosureSubsts};
 use rustc::ty::fold::TypeFoldable;
 use rustc::ty::error::TypeError;
 use rustc::ty::relate::RelateResult;
-use smallvec::{smallvec, SmallVec};
-use std::ops::Deref;
+use errors::DiagnosticBuilder;
 use syntax::feature_gate;
 use syntax::ptr::P;
 use syntax_pos;
+
+use std::collections::VecDeque;
+use std::ops::Deref;
 
 struct Coerce<'a, 'gcx: 'a + 'tcx, 'tcx: 'a> {
     fcx: &'a FnCtxt<'a, 'gcx, 'tcx>,
@@ -142,7 +144,8 @@ impl<'f, 'gcx, 'tcx> Coerce<'f, 'gcx, 'tcx> {
     fn unify(&self, a: Ty<'tcx>, b: Ty<'tcx>) -> InferResult<'tcx, Ty<'tcx>> {
         self.commit_if_ok(|_| {
             if self.use_lub {
-                self.at(&self.cause, self.fcx.param_env).lub(b, a)
+                self.at(&self.cause, self.fcx.param_env)
+                    .lub(b, a)
             } else {
                 self.at(&self.cause, self.fcx.param_env)
                     .sup(b, a)
@@ -253,8 +256,8 @@ impl<'f, 'gcx, 'tcx> Coerce<'f, 'gcx, 'tcx> {
                                b: Ty<'tcx>,
                                r_b: ty::Region<'tcx>,
                                mt_b: TypeAndMut<'tcx>)
-                               -> CoerceResult<'tcx>
-    {
+                               -> CoerceResult<'tcx> {
+
         debug!("coerce_borrowed_pointer(a={:?}, b={:?})", a, b);
 
         // If we have a parameter of type `&M T_a` and the value
@@ -336,7 +339,7 @@ impl<'f, 'gcx, 'tcx> Coerce<'f, 'gcx, 'tcx> {
             //   the decision to region inference (and regionck, which will add
             //   some more edges to this variable). However, this can wind up
             //   creating a crippling number of variables in some cases --
-            //   e.g., #32278 -- so we optimize one particular case [3].
+            //   e.g. #32278 -- so we optimize one particular case [3].
             //   Let me try to explain with some examples:
             //   - The "running example" above represents the simple case,
             //     where we have one `&` reference at the outer level and
@@ -534,23 +537,18 @@ impl<'f, 'gcx, 'tcx> Coerce<'f, 'gcx, 'tcx> {
 
         let mut selcx = traits::SelectionContext::new(self);
 
+        // Use a FIFO queue for this custom fulfillment procedure. (The maximum
+        // length is almost always 1.)
+        let mut queue = VecDeque::with_capacity(1);
+
         // Create an obligation for `Source: CoerceUnsized<Target>`.
         let cause = ObligationCause::misc(self.cause.span, self.body_id);
-
-        // Use a FIFO queue for this custom fulfillment procedure.
-        //
-        // A Vec (or SmallVec) is not a natural choice for a queue. However,
-        // this code path is hot, and this queue usually has a max length of 1
-        // and almost never more than 3. By using a SmallVec we avoid an
-        // allocation, at the (very small) cost of (occasionally) having to
-        // shift subsequent elements down when removing the front element.
-        let mut queue: SmallVec<[_; 4]> =
-            smallvec![self.tcx.predicate_for_trait_def(self.fcx.param_env,
-                                                       cause,
-                                                       coerce_unsized_did,
-                                                       0,
-                                                       coerce_source,
-                                                       &[coerce_target.into()])];
+        queue.push_back(self.tcx.predicate_for_trait_def(self.fcx.param_env,
+                                                         cause,
+                                                         coerce_unsized_did,
+                                                         0,
+                                                         coerce_source,
+                                                         &[coerce_target.into()]));
 
         let mut has_unsized_tuple_coercion = false;
 
@@ -558,8 +556,7 @@ impl<'f, 'gcx, 'tcx> Coerce<'f, 'gcx, 'tcx> {
         // emitting a coercion in cases like `Foo<$1>` -> `Foo<$2>`, where
         // inference might unify those two inner type variables later.
         let traits = [coerce_unsized_did, unsize_did];
-        while !queue.is_empty() {
-            let obligation = queue.remove(0);
+        while let Some(obligation) = queue.pop_front() {
             debug!("coerce_unsized resolve step: {:?}", obligation);
             let trait_ref = match obligation.predicate {
                 ty::Predicate::Trait(ref tr) if traits.contains(&tr.def_id()) => {
@@ -594,7 +591,9 @@ impl<'f, 'gcx, 'tcx> Coerce<'f, 'gcx, 'tcx> {
                 }
 
                 Ok(Some(vtable)) => {
-                    queue.extend(vtable.nested_obligations())
+                    for obligation in vtable.nested_obligations() {
+                        queue.push_back(obligation);
+                    }
                 }
             }
         }
@@ -621,11 +620,12 @@ impl<'f, 'gcx, 'tcx> Coerce<'f, 'gcx, 'tcx> {
               G: FnOnce(Ty<'tcx>) -> Vec<Adjustment<'tcx>>
     {
         if let ty::FnPtr(fn_ty_b) = b.sty {
-            if let (hir::Unsafety::Normal, hir::Unsafety::Unsafe)
-                = (fn_ty_a.unsafety(), fn_ty_b.unsafety())
-            {
-                let unsafe_a = self.tcx.safe_to_unsafe_fn_ty(fn_ty_a);
-                return self.unify_and(unsafe_a, b, to_unsafe);
+            match (fn_ty_a.unsafety(), fn_ty_b.unsafety()) {
+                (hir::Unsafety::Normal, hir::Unsafety::Unsafe) => {
+                    let unsafe_a = self.tcx.safe_to_unsafe_fn_ty(fn_ty_a);
+                    return self.unify_and(unsafe_a, b, to_unsafe);
+                }
+                _ => {}
             }
         }
         self.unify_and(a, b, normal)
@@ -653,6 +653,7 @@ impl<'f, 'gcx, 'tcx> Coerce<'f, 'gcx, 'tcx> {
                            -> CoerceResult<'tcx> {
         //! Attempts to coerce from the type of a Rust function item
         //! into a closure or a `proc`.
+        //!
 
         let b = self.shallow_resolve(b);
         debug!("coerce_from_fn_item(a={:?}, b={:?})", a, b);
@@ -696,7 +697,7 @@ impl<'f, 'gcx, 'tcx> Coerce<'f, 'gcx, 'tcx> {
 
         let b = self.shallow_resolve(b);
 
-        let node_id_a = self.tcx.hir().as_local_node_id(def_id_a).unwrap();
+        let node_id_a = self.tcx.hir.as_local_node_id(def_id_a).unwrap();
         match b.sty {
             ty::FnPtr(_) if self.tcx.with_freevars(node_id_a, |v| v.is_empty()) => {
                 // We coerce the closure, which has fn type
@@ -723,7 +724,9 @@ impl<'f, 'gcx, 'tcx> Coerce<'f, 'gcx, 'tcx> {
         let (is_ref, mt_a) = match a.sty {
             ty::Ref(_, ty, mutbl) => (true, ty::TypeAndMut { ty, mutbl }),
             ty::RawPtr(mt) => (false, mt),
-            _ => return self.unify_and(a, b, identity)
+            _ => {
+                return self.unify_and(a, b, identity);
+            }
         };
 
         // Check that the types which they point at are compatible.
@@ -809,7 +812,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // Special-case that coercion alone cannot handle:
         // Two function item types of differing IDs or Substs.
         if let (&ty::FnDef(..), &ty::FnDef(..)) = (&prev_ty.sty, &new_ty.sty) {
-            // Don't reify if the function types have a LUB, i.e., they
+            // Don't reify if the function types have a LUB, i.e. they
             // are the same function and their parameters have a LUB.
             let lub_ty = self.commit_if_ok(|_| {
                 self.at(cause, self.param_env)
@@ -893,10 +896,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             };
 
             if !noop {
-                return self.commit_if_ok(|_|
+                return self.commit_if_ok(|_| {
                     self.at(cause, self.param_env)
                         .lub(prev_ty, new_ty)
-                ).map(|ok| self.register_infer_ok_obligations(ok));
+                }).map(|ok| self.register_infer_ok_obligations(ok));
             }
         }
 
@@ -906,10 +909,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 if let Some(e) = first_error {
                     Err(e)
                 } else {
-                    self.commit_if_ok(|_|
+                    self.commit_if_ok(|_| {
                         self.at(cause, self.param_env)
                             .lub(prev_ty, new_ty)
-                    ).map(|ok| self.register_infer_ok_obligations(ok))
+                    }).map(|ok| self.register_infer_ok_obligations(ok))
                 }
             }
             Ok(ok) => {
@@ -1002,7 +1005,7 @@ impl<'gcx, 'tcx, 'exprs, E> CoerceMany<'gcx, 'tcx, 'exprs, E>
     /// needlessly cloning the slice.
     pub fn with_coercion_sites(expected_ty: Ty<'tcx>,
                                coercion_sites: &'exprs [E])
-                               -> Self {
+                      -> Self {
         Self::make(expected_ty, Expressions::UpFront(coercion_sites))
     }
 

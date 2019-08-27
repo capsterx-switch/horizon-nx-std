@@ -35,14 +35,12 @@ use syntax_pos::Span;
 use transform::MirSource;
 use util as mir_util;
 
-use super::lints;
-
 /// Construct the MIR for a given def-id.
 pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'tcx> {
-    let id = tcx.hir().as_local_node_id(def_id).unwrap();
+    let id = tcx.hir.as_local_node_id(def_id).unwrap();
 
     // Figure out what primary body this item has.
-    let (body_id, return_ty_span) = match tcx.hir().get(id) {
+    let (body_id, return_ty_span) = match tcx.hir.get(id) {
         Node::Variant(variant) =>
             return create_constructor_shim(tcx, id, &variant.node.data),
         Node::StructCtor(ctor) =>
@@ -76,10 +74,10 @@ pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'t
             (*body_id, ty.span)
         }
         Node::AnonConst(hir::AnonConst { body, id, .. }) => {
-            (*body, tcx.hir().span(*id))
+            (*body, tcx.hir.span(*id))
         }
 
-        _ => span_bug!(tcx.hir().span(id), "can't build MIR for {:?}", def_id),
+        _ => span_bug!(tcx.hir.span(id), "can't build MIR for {:?}", def_id),
     };
 
     tcx.infer_ctxt().enter(|infcx| {
@@ -89,11 +87,10 @@ pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'t
         } else if let hir::BodyOwnerKind::Fn = cx.body_owner_kind {
             // fetch the fully liberated fn signature (that is, all bound
             // types/lifetimes replaced)
-            let fn_hir_id = tcx.hir().node_to_hir_id(id);
+            let fn_hir_id = tcx.hir.node_to_hir_id(id);
             let fn_sig = cx.tables().liberated_fn_sigs()[fn_hir_id].clone();
-            let fn_def_id = tcx.hir().local_def_id(id);
 
-            let ty = tcx.type_of(fn_def_id);
+            let ty = tcx.type_of(tcx.hir.local_def_id(id));
             let mut abi = fn_sig.abi;
             let implicit_argument = match ty.sty {
                 ty::Closure(..) => {
@@ -109,39 +106,27 @@ pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'t
                 _ => None,
             };
 
+            // FIXME: safety in closures
             let safety = match fn_sig.unsafety {
                 hir::Unsafety::Normal => Safety::Safe,
-                hir::Unsafety::Unsafe if tcx.is_min_const_fn(fn_def_id) => {
-                    // As specified in #55607, a `const unsafe fn` differs
-                    // from an `unsafe fn` in that its body is still considered
-                    // safe code by default.
-                    assert!(implicit_argument.is_none());
-                    Safety::Safe
-                },
                 hir::Unsafety::Unsafe => Safety::FnUnsafe,
             };
 
-            let body = tcx.hir().body(body_id);
+            let body = tcx.hir.body(body_id);
             let explicit_arguments =
                 body.arguments
                     .iter()
                     .enumerate()
                     .map(|(index, arg)| {
-                        let owner_id = tcx.hir().body_owner(body_id);
+                        let owner_id = tcx.hir.body_owner(body_id);
                         let opt_ty_info;
                         let self_arg;
-                        if let Some(ref fn_decl) = tcx.hir().fn_decl(owner_id) {
+                        if let Some(ref fn_decl) = tcx.hir.fn_decl(owner_id) {
                             let ty_hir_id = fn_decl.inputs[index].hir_id;
-                            let ty_span = tcx.hir().span(tcx.hir().hir_to_node_id(ty_hir_id));
+                            let ty_span = tcx.hir.span(tcx.hir.hir_to_node_id(ty_hir_id));
                             opt_ty_info = Some(ty_span);
-                            self_arg = if index == 0 && fn_decl.implicit_self.has_implicit_self() {
-                                match fn_decl.implicit_self {
-                                    hir::ImplicitSelfKind::Imm => Some(ImplicitSelfKind::Imm),
-                                    hir::ImplicitSelfKind::Mut => Some(ImplicitSelfKind::Mut),
-                                    hir::ImplicitSelfKind::ImmRef => Some(ImplicitSelfKind::ImmRef),
-                                    hir::ImplicitSelfKind::MutRef => Some(ImplicitSelfKind::MutRef),
-                                    _ => None,
-                                }
+                            self_arg = if index == 0 && fn_decl.has_implicit_self {
+                                Some(ImplicitSelfBinding)
                             } else {
                                 None
                             };
@@ -159,7 +144,7 @@ pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'t
                     ty::Generator(gen_def_id, gen_substs, ..) =>
                         gen_substs.sig(gen_def_id, tcx),
                     _ =>
-                        span_bug!(tcx.hir().span(id), "generator w/o generator type: {:?}", ty),
+                        span_bug!(tcx.hir.span(id), "generator w/o generator type: {:?}", ty),
                 };
                 (Some(gen_sig.yield_ty), gen_sig.return_ty)
             } else {
@@ -184,8 +169,6 @@ pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'t
 
         mir_util::dump_mir(tcx, None, "mir_map", &0,
                            MirSource::item(def_id), &mir, |_, _| Ok(()) );
-
-        lints::check(tcx, &mir, def_id);
 
         mir
     })
@@ -246,7 +229,7 @@ fn create_constructor_shim<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                      v: &'tcx hir::VariantData)
                                      -> Mir<'tcx>
 {
-    let span = tcx.hir().span(ctor_id);
+    let span = tcx.hir.span(ctor_id);
     if let hir::VariantData::Tuple(ref fields, ctor_id) = *v {
         tcx.infer_ctxt().enter(|infcx| {
             let mut mir = shim::build_adt_ctor(&infcx, ctor_id, fields, span);
@@ -263,7 +246,7 @@ fn create_constructor_shim<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             };
 
             mir_util::dump_mir(tcx, None, "mir_map", &0,
-                               MirSource::item(tcx.hir().local_def_id(ctor_id)),
+                               MirSource::item(tcx.hir.local_def_id(ctor_id)),
                                &mir, |_, _| Ok(()) );
 
             mir
@@ -280,7 +263,7 @@ fn liberated_closure_env_ty<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
                                             closure_expr_id: ast::NodeId,
                                             body_id: hir::BodyId)
                                             -> Ty<'tcx> {
-    let closure_expr_hir_id = tcx.hir().node_to_hir_id(closure_expr_id);
+    let closure_expr_hir_id = tcx.hir.node_to_hir_id(closure_expr_id);
     let closure_ty = tcx.body_tables(body_id).node_id_to_type(closure_expr_hir_id);
 
     let (closure_def_id, closure_substs) = match closure_ty.sty {
@@ -292,60 +275,6 @@ fn liberated_closure_env_ty<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
     tcx.liberate_late_bound_regions(closure_def_id, &closure_env_ty)
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum BlockFrame {
-    /// Evaluation is currently within a statement.
-    ///
-    /// Examples include:
-    ///  1. `EXPR;`
-    ///  2. `let _ = EXPR;`
-    ///  3. `let x = EXPR;`
-    Statement {
-        /// If true, then statement discards result from evaluating
-        /// the expression (such as examples 1 and 2 above).
-        ignores_expr_result: bool
-    },
-
-    /// Evaluation is currently within the tail expression of a block.
-    ///
-    /// Example: `{ STMT_1; STMT_2; EXPR }`
-    TailExpr {
-        /// If true, then the surrounding context of the block ignores
-        /// the result of evaluating the block's tail expression.
-        ///
-        /// Example: `let _ = { STMT_1; EXPR };`
-        tail_result_is_ignored: bool
-    },
-
-    /// Generic mark meaning that the block occurred as a subexpression
-    /// where the result might be used.
-    ///
-    /// Examples: `foo(EXPR)`, `match EXPR { ... }`
-    SubExpr,
-}
-
-impl BlockFrame {
-    fn is_tail_expr(&self) -> bool {
-        match *self {
-            BlockFrame::TailExpr { .. } => true,
-
-            BlockFrame::Statement { .. } |
-            BlockFrame::SubExpr => false,
-        }
-    }
-    fn is_statement(&self) -> bool {
-        match *self {
-            BlockFrame::Statement { .. } => true,
-
-            BlockFrame::TailExpr { .. } |
-            BlockFrame::SubExpr => false,
-        }
-    }
- }
-
-#[derive(Debug)]
-struct BlockContext(Vec<BlockFrame>);
-
 struct Builder<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     hir: Cx<'a, 'gcx, 'tcx>,
     cfg: CFG<'tcx>,
@@ -356,20 +285,6 @@ struct Builder<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     /// the current set of scopes, updated as we traverse;
     /// see the `scope` module for more details
     scopes: Vec<scope::Scope<'tcx>>,
-
-    /// the block-context: each time we build the code within an hair::Block,
-    /// we push a frame here tracking whether we are building a statement or
-    /// if we are pushing the tail expression of the block. This is used to
-    /// embed information in generated temps about whether they were created
-    /// for a block tail expression or not.
-    ///
-    /// It would be great if we could fold this into `self.scopes`
-    /// somehow; but right now I think that is very tightly tied to
-    /// the code generation in ways that we cannot (or should not)
-    /// start just throwing new entries onto that vector in order to
-    /// distinguish the context of EXPR1 from the context of EXPR2 in
-    /// `{ STMTS; EXPR1 } + EXPR2`
-    block_context: BlockContext,
 
     /// The current unsafe block in scope, even if it is hidden by
     /// a PushUnsafeBlock
@@ -416,55 +331,6 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
 
     fn var_local_id(&self, id: ast::NodeId, for_guard: ForGuard) -> Local {
         self.var_indices[&id].local_id(for_guard)
-    }
-}
-
-impl BlockContext {
-    fn new() -> Self { BlockContext(vec![]) }
-    fn push(&mut self, bf: BlockFrame) { self.0.push(bf); }
-    fn pop(&mut self) -> Option<BlockFrame> { self.0.pop() }
-
-    /// Traverses the frames on the BlockContext, searching for either
-    /// the first block-tail expression frame with no intervening
-    /// statement frame.
-    ///
-    /// Notably, this skips over `SubExpr` frames; this method is
-    /// meant to be used in the context of understanding the
-    /// relationship of a temp (created within some complicated
-    /// expression) with its containing expression, and whether the
-    /// value of that *containing expression* (not the temp!) is
-    /// ignored.
-    fn currently_in_block_tail(&self) -> Option<BlockTailInfo> {
-        for bf in self.0.iter().rev() {
-            match bf {
-                BlockFrame::SubExpr => continue,
-                BlockFrame::Statement { .. } => break,
-                &BlockFrame::TailExpr { tail_result_is_ignored } =>
-                    return Some(BlockTailInfo { tail_result_is_ignored })
-            }
-        }
-
-        return None;
-    }
-
-    /// Looks at the topmost frame on the BlockContext and reports
-    /// whether its one that would discard a block tail result.
-    ///
-    /// Unlike `currently_within_ignored_tail_expression`, this does
-    /// *not* skip over `SubExpr` frames: here, we want to know
-    /// whether the block result itself is discarded.
-    fn currently_ignores_tail_results(&self) -> bool {
-        match self.0.last() {
-            // no context: conservatively assume result is read
-            None => false,
-
-            // sub-expression: block result feeds into some computation
-            Some(BlockFrame::SubExpr) => false,
-
-            // otherwise: use accumulated is_ignored state.
-            Some(BlockFrame::TailExpr { tail_result_is_ignored: ignored }) |
-            Some(BlockFrame::Statement { ignores_expr_result: ignored }) => *ignored,
-        }
     }
 }
 
@@ -628,7 +494,12 @@ fn should_abort_on_panic<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
     // unwind anyway. Don't stop them.
     let attrs = &tcx.get_attrs(fn_def_id);
     match attr::find_unwind_attr(Some(tcx.sess.diagnostic()), attrs) {
-        None => true,
+        None => {
+            // FIXME(rust-lang/rust#48251) -- Had to disable
+            // abort-on-panic for backwards compatibility reasons.
+            false
+        }
+
         Some(UnwindAttr::Allowed) => false,
         Some(UnwindAttr::Aborts) => true,
     }
@@ -637,10 +508,12 @@ fn should_abort_on_panic<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
 ///////////////////////////////////////////////////////////////////////////
 /// the main entry point for building MIR for a function
 
+struct ImplicitSelfBinding;
+
 struct ArgInfo<'gcx>(Ty<'gcx>,
                      Option<Span>,
                      Option<&'gcx hir::Pat>,
-                     Option<ImplicitSelfKind>);
+                     Option<ImplicitSelfBinding>);
 
 fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
                                    fn_id: ast::NodeId,
@@ -657,16 +530,16 @@ fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
     let arguments: Vec<_> = arguments.collect();
 
     let tcx = hir.tcx();
-    let span = tcx.hir().span(fn_id);
+    let span = tcx.hir.span(fn_id);
 
     // Gather the upvars of a closure, if any.
     let upvar_decls: Vec<_> = tcx.with_freevars(fn_id, |freevars| {
         freevars.iter().map(|fv| {
             let var_id = fv.var_id();
-            let var_hir_id = tcx.hir().node_to_hir_id(var_id);
-            let closure_expr_id = tcx.hir().local_def_id(fn_id);
+            let var_hir_id = tcx.hir.node_to_hir_id(var_id);
+            let closure_expr_id = tcx.hir.local_def_id(fn_id);
             let capture = hir.tables().upvar_capture(ty::UpvarId {
-                var_path: ty::UpvarPath {hir_id: var_hir_id},
+                var_id: var_hir_id,
                 closure_expr_id: LocalDefId::from_def_id(closure_expr_id),
             });
             let by_ref = match capture {
@@ -679,7 +552,7 @@ fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
                 by_ref,
                 mutability: Mutability::Not,
             };
-            if let Some(Node::Binding(pat)) = tcx.hir().find(var_id) {
+            if let Some(Node::Binding(pat)) = tcx.hir.find(var_id) {
                 if let hir::PatKind::Binding(_, _, ident, _) = pat.node {
                     decl.debug_name = ident.name;
 
@@ -698,7 +571,7 @@ fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
         }).collect()
     });
 
-    let mut builder = Builder::new(hir,
+    let mut builder = Builder::new(hir.clone(),
         span,
         arguments.len(),
         safety,
@@ -706,7 +579,7 @@ fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
         return_ty_span,
         upvar_decls);
 
-    let fn_def_id = tcx.hir().local_def_id(fn_id);
+    let fn_def_id = tcx.hir.local_def_id(fn_id);
     let call_site_scope = region::Scope {
         id: body.value.hir_id.local_id,
         data: region::ScopeData::CallSite
@@ -749,7 +622,7 @@ fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
         // RustCall pseudo-ABI untuples the last argument.
         spread_arg = Some(Local::new(arguments.len()));
     }
-    let closure_expr_id = tcx.hir().local_def_id(fn_id);
+    let closure_expr_id = tcx.hir.local_def_id(fn_id);
     info!("fn_id {:?} has attrs {:?}", closure_expr_id,
           tcx.get_attrs(closure_expr_id));
 
@@ -764,11 +637,11 @@ fn construct_const<'a, 'gcx, 'tcx>(
     ty_span: Span,
 ) -> Mir<'tcx> {
     let tcx = hir.tcx();
-    let ast_expr = &tcx.hir().body(body_id).value;
+    let ast_expr = &tcx.hir.body(body_id).value;
     let ty = hir.tables().expr_ty_adjusted(ast_expr);
-    let owner_id = tcx.hir().body_owner(body_id);
-    let span = tcx.hir().span(owner_id);
-    let mut builder = Builder::new(hir, span, 0, Safety::Safe, ty, ty_span,vec![]);
+    let owner_id = tcx.hir.body_owner(body_id);
+    let span = tcx.hir.span(owner_id);
+    let mut builder = Builder::new(hir.clone(), span, 0, Safety::Safe, ty, ty_span,vec![]);
 
     let mut block = START_BLOCK;
     let expr = builder.hir.mirror(ast_expr);
@@ -793,8 +666,8 @@ fn construct_const<'a, 'gcx, 'tcx>(
 fn construct_error<'a, 'gcx, 'tcx>(hir: Cx<'a, 'gcx, 'tcx>,
                                    body_id: hir::BodyId)
                                    -> Mir<'tcx> {
-    let owner_id = hir.tcx().hir().body_owner(body_id);
-    let span = hir.tcx().hir().span(owner_id);
+    let owner_id = hir.tcx().hir.body_owner(body_id);
+    let span = hir.tcx().hir.span(owner_id);
     let ty = hir.tcx().types.err;
     let mut builder = Builder::new(hir, span, 0, Safety::Safe, ty, span, vec![]);
     let source_info = builder.source_info(span);
@@ -818,7 +691,6 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             fn_span: span,
             arg_count,
             scopes: vec![],
-            block_context: BlockContext::new(),
             source_scopes: IndexVec::new(),
             source_scope: OUTERMOST_SOURCE_SCOPE,
             source_scope_local_data: IndexVec::new(),
@@ -831,7 +703,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                 1,
             ),
             upvar_decls,
-            var_indices: Default::default(),
+            var_indices: NodeMap(),
             unit_temp: None,
             cached_resume_block: None,
             cached_return_block: None,
@@ -899,13 +771,12 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             self.local_decls.push(LocalDecl {
                 mutability: Mutability::Mut,
                 ty,
-                user_ty: UserTypeProjections::none(),
+                user_ty: None,
                 source_info,
                 visibility_scope: source_info.scope,
                 name,
                 internal: false,
                 is_user_variable: None,
-                is_block_tail: None,
             });
         }
 
@@ -926,8 +797,8 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                     PatternKind::Binding { mutability, var, mode: BindingMode::ByValue, .. } => {
                         self.local_decls[local].mutability = mutability;
                         self.local_decls[local].is_user_variable =
-                            if let Some(kind) = self_binding {
-                                Some(ClearCrossCrate::Set(BindingForm::ImplicitSelf(*kind)))
+                            if let Some(ImplicitSelfBinding) = self_binding {
+                                Some(ClearCrossCrate::Set(BindingForm::ImplicitSelf))
                             } else {
                                 let binding_mode = ty::BindingMode::BindByValue(mutability.into());
                                 Some(ClearCrossCrate::Set(BindingForm::Var(VarBindingForm {

@@ -59,20 +59,14 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         }
 
         let expr_ty = expr.ty;
-        let temp = {
-            let mut local_decl = LocalDecl::new_temp(expr_ty, expr_span);
-            if mutability == Mutability::Not {
-                local_decl = local_decl.immutable();
-            }
-
-            debug!("creating temp {:?} with block_context: {:?}", local_decl, this.block_context);
-            // Find out whether this temp is being created within the
-            // tail expression of a block whose result is ignored.
-            if let Some(tail_info) = this.block_context.currently_in_block_tail() {
-                local_decl = local_decl.block_tail(tail_info);
-            }
-            this.local_decls.push(local_decl)
+        let temp = if mutability == Mutability::Not {
+            this.local_decls
+                .push(LocalDecl::new_immutable_temp(expr_ty, expr_span))
+        } else {
+            this.local_decls
+                .push(LocalDecl::new_temp(expr_ty, expr_span))
         };
+
         if !expr_ty.is_never() {
             this.cfg.push(
                 block,
@@ -85,15 +79,9 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
 
         unpack!(block = this.into(&Place::Local(temp), block, expr));
 
-        // In constants, temp_lifetime is None for temporaries that live for the
-        // 'static lifetime. Thus we do not drop these temporaries and simply leak them.
-        // This is equivalent to what `let x = &foo();` does in functions. The temporary
-        // is lifted to their surrounding scope. In a function that means the temporary lives
-        // until just before the function returns. In constants that means it outlives the
-        // constant's initialization value computation. Anything outliving a constant
-        // must have the `'static` lifetime and live forever.
-        // Anything with a shorter lifetime (e.g the `&foo()` in `bar(&foo())` or anything
-        // within a block will keep the regular drops just like runtime code.
+        // In constants, temp_lifetime is None. We should not need to drop
+        // anything because no values with a destructor can be created in
+        // a constant at this time, even if the type may need dropping.
         if let Some(temp_lifetime) = temp_lifetime {
             this.schedule_drop_storage_and_value(
                 expr_span,

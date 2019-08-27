@@ -229,7 +229,7 @@ pub trait Folder : Sized {
 
     fn fold_mac(&mut self, _mac: Mac) -> Mac {
         panic!("fold_mac disabled by default");
-        // N.B., see note about macros above.
+        // NB: see note about macros above.
         // if you really want a folder that
         // works on macros, use this
         // definition in your trait impl:
@@ -468,9 +468,8 @@ pub fn noop_fold_usize<T: Folder>(i: usize, _: &mut T) -> usize {
 
 pub fn noop_fold_path<T: Folder>(Path { segments, span }: Path, fld: &mut T) -> Path {
     Path {
-        segments: segments.move_map(|PathSegment { ident, id, args }| PathSegment {
+        segments: segments.move_map(|PathSegment { ident, args }| PathSegment {
             ident: fld.fold_ident(ident),
-            id: fld.new_id(id),
             args: args.map(|args| args.map(|args| fld.fold_generic_args(args))),
         }),
         span: fld.new_span(span)
@@ -605,10 +604,12 @@ pub fn noop_fold_tt<T: Folder>(tt: TokenTree, fld: &mut T) -> TokenTree {
     match tt {
         TokenTree::Token(span, tok) =>
             TokenTree::Token(fld.new_span(span), fld.fold_token(tok)),
-        TokenTree::Delimited(span, delim, tts) => TokenTree::Delimited(
+        TokenTree::Delimited(span, delimed) => TokenTree::Delimited(
             DelimSpan::from_pair(fld.new_span(span.open), fld.new_span(span.close)),
-            delim,
-            fld.fold_tts(tts.stream()).into(),
+            Delimited {
+                tts: fld.fold_tts(delimed.stream()).into(),
+                delim: delimed.delim,
+            }
         ),
     }
 }
@@ -635,7 +636,7 @@ pub fn noop_fold_token<T: Folder>(t: token::Token, fld: &mut T) -> token::Token 
 
 /// apply folder to elements of interpolated nodes
 //
-// N.B., this can occur only when applying a fold to partially expanded code, where
+// NB: this can occur only when applying a fold to partially expanded code, where
 // parsed pieces have gotten implanted ito *other* macro invocations. This is relevant
 // for macro hygiene, but possibly not elsewhere.
 //
@@ -943,7 +944,7 @@ pub fn noop_fold_item_kind<T: Folder>(i: ItemKind, folder: &mut T) -> ItemKind {
         ItemKind::Enum(enum_definition, generics) => {
             let generics = folder.fold_generics(generics);
             let variants = enum_definition.variants.move_map(|x| folder.fold_variant(x));
-            ItemKind::Enum(ast::EnumDef { variants }, generics)
+            ItemKind::Enum(ast::EnumDef { variants: variants }, generics)
         }
         ItemKind::Struct(struct_def, generics) => {
             let generics = folder.fold_generics(generics);
@@ -964,7 +965,7 @@ pub fn noop_fold_item_kind<T: Folder>(i: ItemKind, folder: &mut T) -> ItemKind {
             polarity,
             defaultness,
             folder.fold_generics(generics),
-            ifce.map(|trait_ref| folder.fold_trait_ref(trait_ref)),
+            ifce.map(|trait_ref| folder.fold_trait_ref(trait_ref.clone())),
             folder.fold_ty(ty),
             impl_items.move_flat_map(|item| folder.fold_impl_item(item)),
         ),
@@ -1043,11 +1044,10 @@ pub fn noop_fold_fn_header<T: Folder>(mut header: FnHeader, folder: &mut T) -> F
     header
 }
 
-pub fn noop_fold_mod<T: Folder>(Mod {inner, items, inline}: Mod, folder: &mut T) -> Mod {
+pub fn noop_fold_mod<T: Folder>(Mod {inner, items}: Mod, folder: &mut T) -> Mod {
     Mod {
         inner: folder.new_span(inner),
         items: items.move_flat_map(|x| folder.fold_item(x)),
-        inline: inline,
     }
 }
 
@@ -1077,7 +1077,6 @@ pub fn noop_fold_crate<T: Folder>(Crate {module, attrs, span}: Crate,
         None => (ast::Mod {
             inner: span,
             items: vec![],
-            inline: true,
         }, vec![], span)
     };
 
@@ -1233,7 +1232,6 @@ pub fn noop_fold_expr<T: Folder>(Expr {id, node, span, attrs}: Expr, folder: &mu
                 ExprKind::MethodCall(
                     PathSegment {
                         ident: folder.fold_ident(seg.ident),
-                        id: folder.new_id(seg.id),
                         args: seg.args.map(|args| {
                             args.map(|args| folder.fold_generic_args(args))
                         }),

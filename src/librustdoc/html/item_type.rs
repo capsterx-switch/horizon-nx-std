@@ -11,7 +11,6 @@
 //! Item types.
 
 use std::fmt;
-use syntax::ext::base::MacroKind;
 use clean;
 
 /// Item type. Corresponds to `clean::ItemEnum` variants.
@@ -20,11 +19,6 @@ use clean;
 /// discriminants. JavaScript then is used to decode them into the original value.
 /// Consequently, every change to this type should be synchronized to
 /// the `itemTypes` mapping table in `static/main.js`.
-///
-/// In addition, code in `html::render` uses this enum to generate CSS classes, page prefixes, and
-/// module headings. If you are adding to this enum and want to ensure that the sidebar also prints
-/// a heading, edit the listing in `html/render.rs`, function `sidebar_module`. This uses an
-/// ordering based on a helper function inside `item_module`, in the same file.
 #[derive(Copy, PartialEq, Clone, Debug)]
 pub enum ItemType {
     Module          = 0,
@@ -50,8 +44,6 @@ pub enum ItemType {
     ForeignType     = 20,
     Keyword         = 21,
     Existential     = 22,
-    ProcAttribute   = 23,
-    ProcDerive      = 24,
 }
 
 
@@ -96,12 +88,6 @@ impl<'a> From<&'a clean::Item> for ItemType {
             clean::AssociatedTypeItem(..)  => ItemType::AssociatedType,
             clean::ForeignTypeItem         => ItemType::ForeignType,
             clean::KeywordItem(..)         => ItemType::Keyword,
-            clean::ProcMacroItem(ref mac)  => match mac.kind {
-                MacroKind::Bang            => ItemType::Macro,
-                MacroKind::Attr            => ItemType::ProcAttribute,
-                MacroKind::Derive          => ItemType::ProcDerive,
-                MacroKind::ProcMacroStub   => unreachable!(),
-            }
             clean::StrippedItem(..)        => unreachable!(),
         }
     }
@@ -121,9 +107,7 @@ impl From<clean::TypeKind> for ItemType {
             clean::TypeKind::Variant  => ItemType::Variant,
             clean::TypeKind::Typedef  => ItemType::Typedef,
             clean::TypeKind::Foreign  => ItemType::ForeignType,
-            clean::TypeKind::Macro    => ItemType::Macro,
-            clean::TypeKind::Attr     => ItemType::ProcAttribute,
-            clean::TypeKind::Derive   => ItemType::ProcDerive,
+            clean::TypeKind::Macro  => ItemType::Macro,
         }
     }
 }
@@ -154,8 +138,6 @@ impl ItemType {
             ItemType::ForeignType     => "foreigntype",
             ItemType::Keyword         => "keyword",
             ItemType::Existential     => "existential",
-            ItemType::ProcAttribute   => "attr",
-            ItemType::ProcDerive      => "derive",
         }
     }
 
@@ -184,9 +166,7 @@ impl ItemType {
             ItemType::Constant |
             ItemType::AssociatedConst => NameSpace::Value,
 
-            ItemType::Macro |
-            ItemType::ProcAttribute |
-            ItemType::ProcDerive => NameSpace::Macro,
+            ItemType::Macro => NameSpace::Macro,
 
             ItemType::Keyword => NameSpace::Keyword,
         }

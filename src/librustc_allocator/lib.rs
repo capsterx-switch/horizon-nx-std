@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(nll)]
+#![cfg_attr(not(stage0), feature(nll))]
 #![feature(rustc_private)]
 
 #[macro_use] extern crate log;

@@ -13,7 +13,7 @@
 use std::iter::once;
 
 use syntax::ast;
-use syntax::ext::base::{MacroKind, SyntaxExtension};
+use syntax::ext::base::MacroKind;
 use syntax_pos::Span;
 
 use rustc::hir;
@@ -105,12 +105,12 @@ pub fn try_inline(cx: &DocContext, def: Def, name: ast::Name, visited: &mut FxHa
             record_extern_fqn(cx, did, clean::TypeKind::Const);
             clean::ConstantItem(build_const(cx, did))
         }
-        // FIXME: proc-macros don't propagate attributes or spans across crates, so they look empty
+        // FIXME(misdreavus): if attributes/derives come down here we should probably document them
+        // separately
         Def::Macro(did, MacroKind::Bang) => {
-            let mac = build_macro(cx, did, name);
-            if let clean::MacroItem(..) = mac {
-                record_extern_fqn(cx, did, clean::TypeKind::Macro);
-                mac
+            record_extern_fqn(cx, did, clean::TypeKind::Macro);
+            if let Some(mac) = build_macro(cx, did, name) {
+                clean::MacroItem(mac)
             } else {
                 return None;
             }
@@ -303,8 +303,8 @@ pub fn build_impl(cx: &DocContext, did: DefId, ret: &mut Vec<clean::Item>) {
         }
     }
 
-    let for_ = if let Some(nodeid) = tcx.hir().as_local_node_id(did) {
-        match tcx.hir().expect_item(nodeid).node {
+    let for_ = if let Some(nodeid) = tcx.hir.as_local_node_id(did) {
+        match tcx.hir.expect_item(nodeid).node {
             hir::ItemKind::Impl(.., ref t, _) => {
                 t.clean(cx)
             }
@@ -325,12 +325,12 @@ pub fn build_impl(cx: &DocContext, did: DefId, ret: &mut Vec<clean::Item>) {
     }
 
     let predicates = tcx.predicates_of(did);
-    let (trait_items, generics) = if let Some(nodeid) = tcx.hir().as_local_node_id(did) {
-        match tcx.hir().expect_item(nodeid).node {
+    let (trait_items, generics) = if let Some(nodeid) = tcx.hir.as_local_node_id(did) {
+        match tcx.hir.expect_item(nodeid).node {
             hir::ItemKind::Impl(.., ref gen, _, _, ref item_ids) => {
                 (
                     item_ids.iter()
-                            .map(|ii| tcx.hir().impl_item(ii.id).clean(cx))
+                            .map(|ii| tcx.hir.impl_item(ii.id).clean(cx))
                             .collect::<Vec<_>>(),
                     gen.clean(cx),
                 )
@@ -368,7 +368,7 @@ pub fn build_impl(cx: &DocContext, did: DefId, ret: &mut Vec<clean::Item>) {
            .into_iter()
            .map(|meth| meth.ident.to_string())
            .collect()
-    }).unwrap_or_default();
+    }).unwrap_or(FxHashSet());
 
     debug!("build_impl: impl {:?} for {:?}", trait_.def_id(), for_.def_id());
 
@@ -420,8 +420,8 @@ fn build_module(cx: &DocContext, did: DefId, visited: &mut FxHashSet<DefId>) -> 
 }
 
 pub fn print_inlined_const(cx: &DocContext, did: DefId) -> String {
-    if let Some(node_id) = cx.tcx.hir().as_local_node_id(did) {
-        cx.tcx.hir().node_to_pretty_string(node_id)
+    if let Some(node_id) = cx.tcx.hir.as_local_node_id(did) {
+        cx.tcx.hir.node_to_pretty_string(node_id)
     } else {
         cx.tcx.rendered_const(did)
     }
@@ -442,41 +442,31 @@ fn build_static(cx: &DocContext, did: DefId, mutable: bool) -> clean::Static {
     }
 }
 
-fn build_macro(cx: &DocContext, did: DefId, name: ast::Name) -> clean::ItemEnum {
+fn build_macro(cx: &DocContext, did: DefId, name: ast::Name) -> Option<clean::Macro> {
     let imported_from = cx.tcx.original_crate_name(did.krate);
-    match cx.cstore.load_macro_untracked(did, cx.sess()) {
-        LoadedMacro::MacroDef(def) => {
-            let matchers: hir::HirVec<Span> = if let ast::ItemKind::MacroDef(ref def) = def.node {
-                let tts: Vec<_> = def.stream().into_trees().collect();
-                tts.chunks(4).map(|arm| arm[0].span()).collect()
-            } else {
-                unreachable!()
-            };
+    let def = match cx.cstore.load_macro_untracked(did, cx.sess()) {
+        LoadedMacro::MacroDef(macro_def) => macro_def,
+        // FIXME(jseyfried): document proc macro re-exports
+        LoadedMacro::ProcMacro(..) => return None,
+    };
 
-            let source = format!("macro_rules! {} {{\n{}}}",
-                                 name.clean(cx),
-                                 matchers.iter().map(|span| {
-                                     format!("    {} => {{ ... }};\n", span.to_src(cx))
-                                 }).collect::<String>());
+    let matchers: hir::HirVec<Span> = if let ast::ItemKind::MacroDef(ref def) = def.node {
+        let tts: Vec<_> = def.stream().into_trees().collect();
+        tts.chunks(4).map(|arm| arm[0].span()).collect()
+    } else {
+        unreachable!()
+    };
 
-            clean::MacroItem(clean::Macro {
-                source,
-                imported_from: Some(imported_from).clean(cx),
-            })
-        }
-        LoadedMacro::ProcMacro(ext) => {
-            let helpers = match &*ext {
-                &SyntaxExtension::ProcMacroDerive(_, ref syms, ..) => { syms.clean(cx) }
-                _ => Vec::new(),
-            };
+    let source = format!("macro_rules! {} {{\n{}}}",
+                         name.clean(cx),
+                         matchers.iter().map(|span| {
+                             format!("    {} => {{ ... }};\n", span.to_src(cx))
+                         }).collect::<String>());
 
-            clean::ProcMacroItem(clean::ProcMacro {
-                kind: ext.kind(),
-                helpers,
-            })
-        }
-    }
-
+    Some(clean::Macro {
+        source,
+        imported_from: Some(imported_from).clean(cx),
+    })
 }
 
 /// A trait's generics clause actually contains all of the predicates for all of

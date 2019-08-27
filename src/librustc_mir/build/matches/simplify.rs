@@ -26,10 +26,6 @@ use build::{BlockAnd, BlockAndExtension, Builder};
 use build::matches::{Ascription, Binding, MatchPair, Candidate};
 use hair::*;
 use rustc::mir::*;
-use rustc::ty;
-use rustc::ty::layout::{Integer, IntegerExt, Size};
-use syntax::attr::{SignedInt, UnsignedInt};
-use rustc::hir::RangeEnd;
 
 use std::mem;
 
@@ -66,12 +62,11 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                                  match_pair: MatchPair<'pat, 'tcx>,
                                  candidate: &mut Candidate<'pat, 'tcx>)
                                  -> Result<(), MatchPair<'pat, 'tcx>> {
-        let tcx = self.hir.tcx();
         match *match_pair.pattern.kind {
-            PatternKind::AscribeUserType { ref subpattern, ref user_ty, user_ty_span } => {
+            PatternKind::AscribeUserType { ref subpattern, user_ty } => {
                 candidate.ascriptions.push(Ascription {
-                    span: user_ty_span,
-                    user_ty: user_ty.clone(),
+                    span: match_pair.pattern.span,
+                    user_ty,
                     source: match_pair.place.clone(),
                 });
 
@@ -109,34 +104,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                 Err(match_pair)
             }
 
-            PatternKind::Range { lo, hi, ty, end } => {
-                let range = match ty.sty {
-                    ty::Char => {
-                        Some(('\u{0000}' as u128, '\u{10FFFF}' as u128, Size::from_bits(32)))
-                    }
-                    ty::Int(ity) => {
-                        // FIXME(49937): refactor these bit manipulations into interpret.
-                        let size = Integer::from_attr(&tcx, SignedInt(ity)).size();
-                        let min = 1u128 << (size.bits() - 1);
-                        let max = (1u128 << (size.bits() - 1)) - 1;
-                        Some((min, max, size))
-                    }
-                    ty::Uint(uty) => {
-                        // FIXME(49937): refactor these bit manipulations into interpret.
-                        let size = Integer::from_attr(&tcx, UnsignedInt(uty)).size();
-                        let max = !0u128 >> (128 - size.bits());
-                        Some((0, max, size))
-                    }
-                    _ => None,
-                };
-                if let Some((min, max, sz)) = range {
-                    if let (Some(lo), Some(hi)) = (lo.val.try_to_bits(sz), hi.val.try_to_bits(sz)) {
-                        if lo <= min && (hi > max || hi == max && end == RangeEnd::Included) {
-                            // Irrefutable pattern match.
-                            return Ok(());
-                        }
-                    }
-                }
+            PatternKind::Range { .. } => {
                 Err(match_pair)
             }
 
@@ -155,7 +123,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             }
 
             PatternKind::Variant { adt_def, substs, variant_index, ref subpatterns } => {
-                let irrefutable = adt_def.variants.iter_enumerated().all(|(i, v)| {
+                let irrefutable = adt_def.variants.iter().enumerate().all(|(i, v)| {
                     i == variant_index || {
                         self.hir.tcx().features().never_type &&
                         self.hir.tcx().features().exhaustive_patterns &&

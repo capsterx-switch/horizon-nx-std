@@ -22,6 +22,8 @@
 //! If you expect to store more than 1 element in the common case, steer clear
 //! and use a `Vec<T>`, `Box<[T]>`, or a `SmallVec<T>`.
 
+use std::mem;
+
 #[derive(Clone, Hash, Debug, PartialEq)]
 pub struct TinyList<T: PartialEq> {
     head: Option<Element<T>>
@@ -50,7 +52,7 @@ impl<T: PartialEq> TinyList<T> {
     pub fn insert(&mut self, data: T) {
         self.head = Some(Element {
             data,
-            next: self.head.take().map(Box::new)
+            next: mem::replace(&mut self.head, None).map(Box::new),
         });
     }
 
@@ -58,7 +60,7 @@ impl<T: PartialEq> TinyList<T> {
     pub fn remove(&mut self, data: &T) -> bool {
         self.head = match self.head {
             Some(ref mut head) if head.data == *data => {
-                head.next.take().map(|x| *x)
+                mem::replace(&mut head.next, None).map(|x| *x)
             }
             Some(ref mut head) => return head.remove_next(data),
             None => return false,
@@ -98,7 +100,7 @@ impl<T: PartialEq> Element<T> {
             if next.data != *data {
                 return next.remove_next(data)
             } else {
-                next.next.take()
+                mem::replace(&mut next.next, None)
             }
         } else {
             return false

@@ -15,7 +15,6 @@ pub use self::StructType::*;
 use syntax::ast;
 use syntax::ast::{Name, NodeId};
 use syntax::attr;
-use syntax::ext::base::MacroKind;
 use syntax::ptr::P;
 use syntax::source_map::Spanned;
 use syntax_pos::{self, Span};
@@ -47,7 +46,6 @@ pub struct Module {
     pub impls: Vec<Impl>,
     pub foreigns: Vec<hir::ForeignMod>,
     pub macros: Vec<Macro>,
-    pub proc_macros: Vec<ProcMacro>,
     pub is_crate: bool,
 }
 
@@ -77,7 +75,6 @@ impl Module {
             impls      : Vec::new(),
             foreigns   : Vec::new(),
             macros     : Vec::new(),
-            proc_macros: Vec::new(),
             is_crate   : false,
         }
     }
@@ -265,17 +262,6 @@ pub struct Import {
     pub path: hir::Path,
     pub glob: bool,
     pub whence: Span,
-}
-
-pub struct ProcMacro {
-    pub name: Name,
-    pub id: NodeId,
-    pub kind: MacroKind,
-    pub helpers: Vec<Name>,
-    pub attrs: hir::HirVec<ast::Attribute>,
-    pub whence: Span,
-    pub stab: Option<attr::Stability>,
-    pub depr: Option<attr::Deprecation>,
 }
 
 pub fn struct_type_from_def(vdata: &hir::VariantData) -> StructType {

@@ -24,16 +24,16 @@ use rustc::util::nodemap::DefIdSet;
 use rustc_data_structures::fx::FxHashMap;
 
 pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
-    let mut used_trait_imports = DefIdSet::default();
-    for &body_id in tcx.hir().krate().bodies.keys() {
-        let item_def_id = tcx.hir().body_owner_def_id(body_id);
+    let mut used_trait_imports = DefIdSet();
+    for &body_id in tcx.hir.krate().bodies.keys() {
+        let item_def_id = tcx.hir.body_owner_def_id(body_id);
         let imports = tcx.used_trait_imports(item_def_id);
         debug!("GatherVisitor: item_def_id={:?} with imports {:#?}", item_def_id, imports);
         used_trait_imports.extend(imports.iter());
     }
 
     let mut visitor = CheckVisitor { tcx, used_trait_imports };
-    tcx.hir().krate().visit_all_item_likes(&mut visitor);
+    tcx.hir.krate().visit_all_item_likes(&mut visitor);
 
     unused_crates_lint(tcx);
 }
@@ -62,12 +62,12 @@ struct CheckVisitor<'a, 'tcx: 'a> {
 
 impl<'a, 'tcx> CheckVisitor<'a, 'tcx> {
     fn check_import(&self, id: ast::NodeId, span: Span) {
-        let def_id = self.tcx.hir().local_def_id(id);
+        let def_id = self.tcx.hir.local_def_id(id);
         if !self.tcx.maybe_unused_trait_import(def_id) {
             return;
         }
 
-        let import_def_id = self.tcx.hir().local_def_id(id);
+        let import_def_id = self.tcx.hir.local_def_id(id);
         if self.used_trait_imports.contains(&import_def_id) {
             return;
         }
@@ -75,7 +75,7 @@ impl<'a, 'tcx> CheckVisitor<'a, 'tcx> {
         let msg = if let Ok(snippet) = self.tcx.sess.source_map().span_to_snippet(span) {
             format!("unused import: `{}`", snippet)
         } else {
-            "unused import".to_owned()
+            "unused import".to_string()
         };
         self.tcx.lint_node(lint::builtin::UNUSED_IMPORTS, id, span, &msg);
     }
@@ -105,49 +105,44 @@ fn unused_crates_lint<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) {
             // Note that if we carry through to the `extern_mod_stmt_cnum` query
             // below it'll cause a panic because `def_id` is actually bogus at this
             // point in time otherwise.
-            if let Some(id) = tcx.hir().as_local_node_id(def_id) {
-                if tcx.hir().find(id).is_none() {
+            if let Some(id) = tcx.hir.as_local_node_id(def_id) {
+                if tcx.hir.find(id).is_none() {
                     return false;
                 }
             }
             true
         })
         .filter(|&&(def_id, _)| {
-            tcx.extern_mod_stmt_cnum(def_id).map_or(true, |cnum| {
-                !tcx.is_compiler_builtins(cnum) &&
-                !tcx.is_panic_runtime(cnum) &&
-                !tcx.has_global_allocator(cnum) &&
-                !tcx.has_panic_handler(cnum)
-            })
+            let cnum = tcx.extern_mod_stmt_cnum(def_id).unwrap();
+            !tcx.is_compiler_builtins(cnum)
+                && !tcx.is_panic_runtime(cnum)
+                && !tcx.has_global_allocator(cnum)
+                && !tcx.has_panic_handler(cnum)
         })
         .cloned()
         .collect();
 
     // Collect all the extern crates (in a reliable order).
     let mut crates_to_lint = vec![];
-    tcx.hir().krate().visit_all_item_likes(&mut CollectExternCrateVisitor {
+    tcx.hir.krate().visit_all_item_likes(&mut CollectExternCrateVisitor {
         tcx,
         crates_to_lint: &mut crates_to_lint,
     });
 
     for extern_crate in &crates_to_lint {
-        let id = tcx.hir().as_local_node_id(extern_crate.def_id).unwrap();
-        let item = tcx.hir().expect_item(id);
+        assert!(extern_crate.def_id.is_local());
 
         // If the crate is fully unused, we suggest removing it altogether.
         // We do this in any edition.
         if extern_crate.warn_if_unused {
             if let Some(&span) = unused_extern_crates.get(&extern_crate.def_id) {
+                assert_eq!(extern_crate.def_id.krate, LOCAL_CRATE);
+                let hir_id = tcx.hir.definitions().def_index_to_hir_id(extern_crate.def_id.index);
+                let id = tcx.hir.hir_to_node_id(hir_id);
                 let msg = "unused extern crate";
-
-                // Removal suggestion span needs to include attributes (Issue #54400)
-                let span_with_attrs = tcx.get_attrs(extern_crate.def_id).iter()
-                    .map(|attr| attr.span)
-                    .fold(span, |acc, attr_span| acc.to(attr_span));
-
                 tcx.struct_span_lint_node(lint, id, span, msg)
                     .span_suggestion_short_with_applicability(
-                        span_with_attrs,
+                        span,
                         "remove it",
                         String::new(),
                         Applicability::MachineApplicable)
@@ -162,13 +157,6 @@ fn unused_crates_lint<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) {
             continue;
         }
 
-        // If the extern crate isn't in the extern prelude,
-        // there is no way it can be written as an `use`.
-        let orig_name = extern_crate.orig_name.unwrap_or(item.name);
-        if !tcx.extern_prelude.get(&orig_name).map_or(false, |from_item| !from_item) {
-            continue;
-        }
-
         // If the extern crate has any attributes, they may have funky
         // semantics we can't faithfully represent using `use` (most
         // notably `#[macro_use]`). Ignore it.
@@ -177,6 +165,9 @@ fn unused_crates_lint<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) {
         }
 
         // Otherwise, we can convert it into a `use` of some kind.
+        let hir_id = tcx.hir.definitions().def_index_to_hir_id(extern_crate.def_id.index);
+        let id = tcx.hir.hir_to_node_id(hir_id);
+        let item = tcx.hir.expect_item(id);
         let msg = "`extern crate` is not idiomatic in the new edition";
         let help = format!(
             "convert it to a `{}`",
@@ -186,7 +177,7 @@ fn unused_crates_lint<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) {
             Some(orig_name) => format!("use {} as {};", orig_name, item.name),
             None => format!("use {};", item.name),
         };
-        let replacement = visibility_qualified(&item.vis, base_replacement);
+        let replacement = visibility_qualified(&item.vis, &base_replacement);
         tcx.struct_span_lint_node(lint, id, extern_crate.span, msg)
             .span_suggestion_short_with_applicability(
                 extern_crate.span,
@@ -223,7 +214,7 @@ struct ExternCrateToLint {
 impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for CollectExternCrateVisitor<'a, 'tcx> {
     fn visit_item(&mut self, item: &hir::Item) {
         if let hir::ItemKind::ExternCrate(orig_name) = item.node {
-            let extern_crate_def_id = self.tcx.hir().local_def_id(item.id);
+            let extern_crate_def_id = self.tcx.hir.local_def_id(item.id);
             self.crates_to_lint.push(
                 ExternCrateToLint {
                     def_id: extern_crate_def_id,

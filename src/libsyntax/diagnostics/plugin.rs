@@ -141,7 +141,6 @@ pub fn expand_register_diagnostic<'cx>(ecx: &'cx mut ExtCtxt,
     ])
 }
 
-#[allow(deprecated)]
 pub fn expand_build_diagnostic_array<'cx>(ecx: &'cx mut ExtCtxt,
                                           span: Span,
                                           token_tree: &[TokenTree])

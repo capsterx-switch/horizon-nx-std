@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use infer::InferCtxt;
-use infer::canonical::OriginalQueryValues;
+use smallvec::SmallVec;
 use traits::{EvaluationResult, PredicateObligation, SelectionContext,
              TraitQueryMode, OverflowError};
 
@@ -38,7 +38,7 @@ impl<'cx, 'gcx, 'tcx> InferCtxt<'cx, 'gcx, 'tcx> {
         &self,
         obligation: &PredicateObligation<'tcx>,
     ) -> Result<EvaluationResult, OverflowError> {
-        let mut _orig_values = OriginalQueryValues::default();
+        let mut _orig_values = SmallVec::new();
         let c_pred = self.canonicalize_query(&obligation.param_env.and(obligation.predicate),
                                              &mut _orig_values);
         // Run canonical query. If overflow occurs, rerun from scratch but this time

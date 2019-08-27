@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(dead_code)]
+
 use cmp;
 use ffi::CString;
 use fmt;
@@ -20,39 +22,20 @@ use sys::net::{cvt, cvt_r, cvt_gai, Socket, init, wrlen_t};
 use sys::net::netc as c;
 use sys_common::{AsInner, FromInner, IntoInner};
 use time::Duration;
-use convert::{TryFrom, TryInto};
 
-#[cfg(any(target_os = "dragonfly", target_os = "freebsd",
-          target_os = "ios", target_os = "macos",
-          target_os = "openbsd", target_os = "netbsd",
-          target_os = "solaris", target_os = "haiku", target_os = "l4re"))]
-use sys::net::netc::IPV6_JOIN_GROUP as IPV6_ADD_MEMBERSHIP;
-#[cfg(not(any(target_os = "dragonfly", target_os = "freebsd",
-              target_os = "ios", target_os = "macos",
-              target_os = "openbsd", target_os = "netbsd",
-              target_os = "solaris", target_os = "haiku", target_os = "l4re")))]
-use sys::net::netc::IPV6_ADD_MEMBERSHIP;
-#[cfg(any(target_os = "dragonfly", target_os = "freebsd",
-          target_os = "ios", target_os = "macos",
-          target_os = "openbsd", target_os = "netbsd",
-          target_os = "solaris", target_os = "haiku", target_os = "l4re"))]
-use sys::net::netc::IPV6_LEAVE_GROUP as IPV6_DROP_MEMBERSHIP;
-#[cfg(not(any(target_os = "dragonfly", target_os = "freebsd",
-              target_os = "ios", target_os = "macos",
-              target_os = "openbsd", target_os = "netbsd",
-              target_os = "solaris", target_os = "haiku", target_os = "l4re")))]
-use sys::net::netc::IPV6_DROP_MEMBERSHIP;
+// IPV6 stuff does not seem to be supported on 3DS. TODO: Determine if that's true
+const IPV6_ADD_MEMBERSHIP: c_int = 0x0;
+const IPV6_DROP_MEMBERSHIP: c_int = 0x0;
+const IPV6_MULTICAST_LOOP: c_int = 0x0;
+const IPV6_V6ONLY: c_int = 0x0;
 
-#[cfg(any(target_os = "linux", target_os = "android",
-          target_os = "dragonfly", target_os = "freebsd",
-          target_os = "openbsd", target_os = "netbsd",
-          target_os = "haiku", target_os = "bitrig"))]
-use libc::MSG_NOSIGNAL;
-#[cfg(not(any(target_os = "linux", target_os = "android",
-              target_os = "dragonfly", target_os = "freebsd",
-              target_os = "openbsd", target_os = "netbsd",
-              target_os = "haiku", target_os = "bitrig")))]
+// Neither are signals
 const MSG_NOSIGNAL: c_int = 0x0;
+
+// These constants are also currently missing from libctru. TODO: Find them?
+const SO_SNDTIMEO: c_int = 0x0;
+const SO_RCVTIMEO: c_int = 0x0;
+const SO_BROADCAST: c_int = 0x0;
 
 ////////////////////////////////////////////////////////////////////////////////
 // sockaddr and misc bindings
@@ -130,13 +113,6 @@ fn to_ipv6mr_interface(value: u32) -> ::libc::c_uint {
 pub struct LookupHost {
     original: *mut c::addrinfo,
     cur: *mut c::addrinfo,
-    port: u16
-}
-
-impl LookupHost {
-    pub fn port(&self) -> u16 {
-        self.port
-    }
 }
 
 impl Iterator for LookupHost {
@@ -166,44 +142,34 @@ impl Drop for LookupHost {
     }
 }
 
-impl<'a> TryFrom<&'a str> for LookupHost {
-    type Error = io::Error;
+pub fn lookup_host(host: &str) -> io::Result<LookupHost> {
+    init();
 
-    fn try_from(s: &str) -> io::Result<LookupHost> {
-        macro_rules! try_opt {
-            ($e:expr, $msg:expr) => (
-                match $e {
-                    Some(r) => r,
-                    None => return Err(io::Error::new(io::ErrorKind::InvalidInput,
-                                                      $msg)),
-                }
-            )
-        }
-
-        // split the string by ':' and convert the second part to u16
-        let mut parts_iter = s.rsplitn(2, ':');
-        let port_str = try_opt!(parts_iter.next(), "invalid socket address");
-        let host = try_opt!(parts_iter.next(), "invalid socket address");
-        let port: u16 = try_opt!(port_str.parse().ok(), "invalid port value");
-
-        (host, port).try_into()
-    }
-}
-
-impl<'a> TryFrom<(&'a str, u16)> for LookupHost {
-    type Error = io::Error;
-
-    fn try_from((host, port): (&'a str, u16)) -> io::Result<LookupHost> {
-        init();
-
-        let c_host = CString::new(host)?;
-        let mut hints: c::addrinfo = unsafe { mem::zeroed() };
-        hints.ai_socktype = c::SOCK_STREAM;
-        let mut res = ptr::null_mut();
-        unsafe {
-            cvt_gai(c::getaddrinfo(c_host.as_ptr(), ptr::null(), &hints, &mut res)).map(|_| {
-                LookupHost { original: res, cur: res, port }
-            })
+    let c_host = CString::new(host)?;
+    let mut hints: c::addrinfo = unsafe { mem::zeroed() };
+    hints.ai_socktype = c::SOCK_STREAM;
+    let mut res = ptr::null_mut();
+    unsafe {
+        match cvt_gai(c::getaddrinfo(c_host.as_ptr() as *const u8, ptr::null(), &hints, &mut res)) {
+            Ok(_) => {
+                Ok(LookupHost { original: res, cur: res })
+            },
+            #[cfg(target_env = "gnu")]
+            Err(e) => {
+                // If we're running glibc prior to version 2.26, the lookup
+                // failure could be caused by caching a stale /etc/resolv.conf.
+                // We need to call libc::res_init() to clear the cache. But we
+                // shouldn't call it in on any other platform, because other
+                // res_init implementations aren't thread-safe. See
+                // https://github.com/rust-lang/rust/issues/41570 and
+                // https://github.com/rust-lang/rust/issues/43592.
+                use sys::net::res_init_if_glibc_before_2_26;
+                let _ = res_init_if_glibc_before_2_26();
+                Err(e)
+            },
+            // the cfg is needed here to avoid an "unreachable pattern" warning
+            #[cfg(not(target_env = "gnu"))]
+            Err(e) => Err(e),
         }
     }
 }
@@ -217,9 +183,7 @@ pub struct TcpStream {
 }
 
 impl TcpStream {
-    pub fn connect(addr: io::Result<&SocketAddr>) -> io::Result<TcpStream> {
-        let addr = addr?;
-
+    pub fn connect(addr: &SocketAddr) -> io::Result<TcpStream> {
         init();
 
         let sock = Socket::new(addr, c::SOCK_STREAM)?;
@@ -242,19 +206,19 @@ impl TcpStream {
     pub fn into_socket(self) -> Socket { self.inner }
 
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.inner.set_timeout(dur, c::SO_RCVTIMEO)
+        self.inner.set_timeout(dur, SO_RCVTIMEO)
     }
 
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.inner.set_timeout(dur, c::SO_SNDTIMEO)
+        self.inner.set_timeout(dur, SO_SNDTIMEO)
     }
 
     pub fn read_timeout(&self) -> io::Result<Option<Duration>> {
-        self.inner.timeout(c::SO_RCVTIMEO)
+        self.inner.timeout(SO_RCVTIMEO)
     }
 
     pub fn write_timeout(&self) -> io::Result<Option<Duration>> {
-        self.inner.timeout(c::SO_SNDTIMEO)
+        self.inner.timeout(SO_SNDTIMEO)
     }
 
     pub fn peek(&self, buf: &mut [u8]) -> io::Result<usize> {
@@ -270,7 +234,7 @@ impl TcpStream {
         let ret = cvt(unsafe {
             c::send(*self.inner.as_inner(),
                     buf.as_ptr() as *const c_void,
-                    len,
+                    len as usize,
                     MSG_NOSIGNAL)
         })?;
         Ok(ret as usize)
@@ -355,9 +319,7 @@ pub struct TcpListener {
 }
 
 impl TcpListener {
-    pub fn bind(addr: io::Result<&SocketAddr>) -> io::Result<TcpListener> {
-        let addr = addr?;
-
+    pub fn bind(addr: &SocketAddr) -> io::Result<TcpListener> {
         init();
 
         let sock = Socket::new(addr, c::SOCK_STREAM)?;
@@ -412,11 +374,11 @@ impl TcpListener {
     }
 
     pub fn set_only_v6(&self, only_v6: bool) -> io::Result<()> {
-        setsockopt(&self.inner, c::IPPROTO_IPV6, c::IPV6_V6ONLY, only_v6 as c_int)
+        setsockopt(&self.inner, c::IPPROTO_IPV6, IPV6_V6ONLY, only_v6 as c_int)
     }
 
     pub fn only_v6(&self) -> io::Result<bool> {
-        let raw: c_int = getsockopt(&self.inner, c::IPPROTO_IPV6, c::IPV6_V6ONLY)?;
+        let raw: c_int = getsockopt(&self.inner, c::IPPROTO_IPV6, IPV6_V6ONLY)?;
         Ok(raw != 0)
     }
 
@@ -458,9 +420,7 @@ pub struct UdpSocket {
 }
 
 impl UdpSocket {
-    pub fn bind(addr: io::Result<&SocketAddr>) -> io::Result<UdpSocket> {
-        let addr = addr?;
-
+    pub fn bind(addr: &SocketAddr) -> io::Result<UdpSocket> {
         init();
 
         let sock = Socket::new(addr, c::SOCK_DGRAM)?;
@@ -492,7 +452,7 @@ impl UdpSocket {
         let (dstp, dstlen) = dst.into_inner();
         let ret = cvt(unsafe {
             c::sendto(*self.inner.as_inner(),
-                      buf.as_ptr() as *const c_void, len,
+                      buf.as_ptr() as *const c_void, len as usize,
                       MSG_NOSIGNAL, dstp, dstlen)
         })?;
         Ok(ret as usize)
@@ -503,27 +463,27 @@ impl UdpSocket {
     }
 
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.inner.set_timeout(dur, c::SO_RCVTIMEO)
+        self.inner.set_timeout(dur, SO_RCVTIMEO)
     }
 
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.inner.set_timeout(dur, c::SO_SNDTIMEO)
+        self.inner.set_timeout(dur, SO_SNDTIMEO)
     }
 
     pub fn read_timeout(&self) -> io::Result<Option<Duration>> {
-        self.inner.timeout(c::SO_RCVTIMEO)
+        self.inner.timeout(SO_RCVTIMEO)
     }
 
     pub fn write_timeout(&self) -> io::Result<Option<Duration>> {
-        self.inner.timeout(c::SO_SNDTIMEO)
+        self.inner.timeout(SO_SNDTIMEO)
     }
 
     pub fn set_broadcast(&self, broadcast: bool) -> io::Result<()> {
-        setsockopt(&self.inner, c::SOL_SOCKET, c::SO_BROADCAST, broadcast as c_int)
+        setsockopt(&self.inner, c::SOL_SOCKET, SO_BROADCAST, broadcast as c_int)
     }
 
     pub fn broadcast(&self) -> io::Result<bool> {
-        let raw: c_int = getsockopt(&self.inner, c::SOL_SOCKET, c::SO_BROADCAST)?;
+        let raw: c_int = getsockopt(&self.inner, c::SOL_SOCKET, SO_BROADCAST)?;
         Ok(raw != 0)
     }
 
@@ -546,11 +506,11 @@ impl UdpSocket {
     }
 
     pub fn set_multicast_loop_v6(&self, multicast_loop_v6: bool) -> io::Result<()> {
-        setsockopt(&self.inner, c::IPPROTO_IPV6, c::IPV6_MULTICAST_LOOP, multicast_loop_v6 as c_int)
+        setsockopt(&self.inner, c::IPPROTO_IPV6, IPV6_MULTICAST_LOOP, multicast_loop_v6 as c_int)
     }
 
     pub fn multicast_loop_v6(&self) -> io::Result<bool> {
-        let raw: c_int = getsockopt(&self.inner, c::IPPROTO_IPV6, c::IPV6_MULTICAST_LOOP)?;
+        let raw: c_int = getsockopt(&self.inner, c::IPPROTO_IPV6, IPV6_MULTICAST_LOOP)?;
         Ok(raw != 0)
     }
 
@@ -620,14 +580,14 @@ impl UdpSocket {
         let ret = cvt(unsafe {
             c::send(*self.inner.as_inner(),
                     buf.as_ptr() as *const c_void,
-                    len,
+                    len as usize,
                     MSG_NOSIGNAL)
         })?;
         Ok(ret as usize)
     }
 
-    pub fn connect(&self, addr: io::Result<&SocketAddr>) -> io::Result<()> {
-        let (addrp, len) = addr?.into_inner();
+    pub fn connect(&self, addr: &SocketAddr) -> io::Result<()> {
+        let (addrp, len) = addr.into_inner();
         cvt_r(|| unsafe { c::connect(*self.inner.as_inner(), addrp, len) }).map(|_| ())
     }
 }
@@ -660,7 +620,7 @@ mod tests {
     #[test]
     fn no_lookup_host_duplicates() {
         let mut addrs = HashMap::new();
-        let lh = match LookupHost::try_from(("localhost", 0)) {
+        let lh = match lookup_host("localhost") {
             Ok(lh) => lh,
             Err(e) => panic!("couldn't resolve `localhost': {}", e)
         };

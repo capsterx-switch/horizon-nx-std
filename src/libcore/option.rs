@@ -62,7 +62,7 @@
 //! The following example uses [`Option`] to create an optional box of
 //! [`i32`]. Notice that in order to use the inner [`i32`] value first, the
 //! `check_optional` function needs to use pattern matching to
-//! determine whether the box has a value (i.e., it is [`Some(...)`][`Some`]) or
+//! determine whether the box has a value (i.e. it is [`Some(...)`][`Some`]) or
 //! not ([`None`]).
 //!
 //! ```
@@ -867,6 +867,8 @@ impl<T> Option<T> {
     /// # Examples
     ///
     /// ```
+    /// #![feature(option_replace)]
+    ///
     /// let mut x = Some(2);
     /// let old = x.replace(5);
     /// assert_eq!(x, Some(5));
@@ -878,7 +880,7 @@ impl<T> Option<T> {
     /// assert_eq!(old, None);
     /// ```
     #[inline]
-    #[stable(feature = "option_replace", since = "1.31.0")]
+    #[unstable(feature = "option_replace", issue = "51998")]
     pub fn replace(&mut self, value: T) -> Option<T> {
         mem::replace(self, Some(value))
     }
@@ -1151,18 +1153,18 @@ impl<'a, A> DoubleEndedIterator for Iter<'a, A> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<A> ExactSizeIterator for Iter<'_, A> {}
+impl<'a, A> ExactSizeIterator for Iter<'a, A> {}
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<A> FusedIterator for Iter<'_, A> {}
+impl<'a, A> FusedIterator for Iter<'a, A> {}
 
 #[unstable(feature = "trusted_len", issue = "37572")]
-unsafe impl<A> TrustedLen for Iter<'_, A> {}
+unsafe impl<'a, A> TrustedLen for Iter<'a, A> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<A> Clone for Iter<'_, A> {
+impl<'a, A> Clone for Iter<'a, A> {
     #[inline]
-    fn clone(&self) -> Self {
+    fn clone(&self) -> Iter<'a, A> {
         Iter { inner: self.inner.clone() }
     }
 }
@@ -1197,12 +1199,12 @@ impl<'a, A> DoubleEndedIterator for IterMut<'a, A> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl<A> ExactSizeIterator for IterMut<'_, A> {}
+impl<'a, A> ExactSizeIterator for IterMut<'a, A> {}
 
 #[stable(feature = "fused", since = "1.26.0")]
-impl<A> FusedIterator for IterMut<'_, A> {}
+impl<'a, A> FusedIterator for IterMut<'a, A> {}
 #[unstable(feature = "trusted_len", issue = "37572")]
-unsafe impl<A> TrustedLen for IterMut<'_, A> {}
+unsafe impl<'a, A> TrustedLen for IterMut<'a, A> {}
 
 /// An iterator over the value in [`Some`] variant of an [`Option`].
 ///
