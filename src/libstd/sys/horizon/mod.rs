@@ -38,8 +38,6 @@ pub mod weak;
 
 pub mod args;
 pub mod android;
-#[cfg(feature = "backtrace")]
-pub mod backtrace;
 pub mod cmath;
 pub mod condvar;
 pub mod env;
