@@ -1823,7 +1823,7 @@ dependencies = [
 [[package]]
 name = "libnx"
 version = "0.1.0"
-source = "git+https://github.com/rusty-horizon/libnx.git?branch=new#e2dd277248295aa52c48e173179cb162e1f98118"
+source = "git+https://github.com/rusty-horizon/libnx.git?branch=new#d349c5b9bf07b3f95eb1e7936d227efc9d1c6039"
 dependencies = [
  "cfg-if",
  "compiler_builtins",

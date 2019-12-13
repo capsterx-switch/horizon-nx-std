@@ -116,6 +116,7 @@ const WHITELIST: &[Crate<'_>] = &[
     Crate("lazy_static"),
     Crate("libc"),
     Crate("libz-sys"),
+    Crate("libnx"),
     Crate("lock_api"),
     Crate("log"),
     Crate("log_settings"),
