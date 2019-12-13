@@ -1821,6 +1821,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "libnx"
+version = "0.1.0"
+source = "git+https://github.com/rusty-horizon/libnx.git?branch=new#e2dd277248295aa52c48e173179cb162e1f98118"
+dependencies = [
+ "cfg-if",
+ "compiler_builtins",
+ "rustc-std-workspace-core",
+]
+
+[[package]]
 name = "libssh2-sys"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4250,6 +4260,7 @@ dependencies = [
  "hashbrown 0.6.2",
  "hermit-abi",
  "libc",
+ "libnx",
  "panic_abort",
  "panic_unwind",
  "profiler_builtins",

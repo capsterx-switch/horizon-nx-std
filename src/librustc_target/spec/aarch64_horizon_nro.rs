@@ -21,7 +21,7 @@ pub fn target() -> Result<Target, String> {
         "-Wl,-z,muldefs".to_string(),
     ]);
     let opts = TargetOptions {
-        target_family: "unix".to_string(),
+        target_family: Some("unix".to_string()),
         linker: Some("aarch64-horizon-nro-ld".to_owned()),
         executables: true,
         relocation_model: "pic".to_string(),
