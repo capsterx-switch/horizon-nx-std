@@ -1290,7 +1290,7 @@ impl fmt::Display for ExitStatus {
 /// [RFC #1937]: https://github.com/rust-lang/rfcs/pull/1937
 #[derive(Clone, Copy, Debug)]
 #[unstable(feature = "process_exitcode_placeholder", issue = "48711")]
-pub struct ExitCode(pub u8);
+pub struct ExitCode(imp::ExitCode);
 
 #[unstable(feature = "process_exitcode_placeholder", issue = "48711")]
 impl ExitCode {
@@ -1300,7 +1300,7 @@ impl ExitCode {
     /// termination, so there's no need to return this from `main` unless
     /// you're also returning other possible codes.
     #[unstable(feature = "process_exitcode_placeholder", issue = "48711")]
-    pub const SUCCESS: ExitCode = ExitCode(0 as _);
+    pub const SUCCESS: ExitCode = ExitCode(imp::ExitCode::SUCCESS);
 
     /// The canonical ExitCode for unsuccessful termination on this platform.
     ///
@@ -1308,7 +1308,7 @@ impl ExitCode {
     /// instead returning `Err(_)` and `Ok(())` respectively, which will
     /// return the same codes (but will also `eprintln!` the error).
     #[unstable(feature = "process_exitcode_placeholder", issue = "48711")]
-    pub const FAILURE: ExitCode = ExitCode(-1 as _);
+    pub const FAILURE: ExitCode = ExitCode(imp::ExitCode::FAILURE);
 }
 
 impl Child {
@@ -1685,7 +1685,7 @@ impl<E: fmt::Debug> Termination for Result<!, E> {
 impl Termination for ExitCode {
     #[inline]
     fn report(self) -> i32 {
-        self.0 as i32
+        self.0.as_i32()
     }
 }
 
